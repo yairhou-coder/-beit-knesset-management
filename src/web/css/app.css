@@ -130,7 +130,7 @@ a:hover { text-decoration: underline; }
 /* --- כרטיסים --- */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(215px, 100%), 1fr));
   gap: 12px;
   margin-bottom: 22px;
 }
@@ -184,7 +184,7 @@ a:hover { text-decoration: underline; }
 .section-body { padding: 14px 16px; }
 .section-body.flush { padding: 0; }
 
-.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); gap: 20px; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr)); gap: 20px; }
 
 /* --- טבלאות --- */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -223,7 +223,7 @@ td.num, th.num { text-align: left; font-variant-numeric: tabular-nums; white-spa
 /* --- טפסים ופילטרים --- */
 .filters {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(165px, 100%), 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -343,12 +343,64 @@ textarea { resize: vertical; min-height: 66px; }
 .kv dt { color: var(--text-muted); }
 .kv dd { margin: 0; }
 
+/* --- פלאפון וטאבלט --- */
 @media (max-width: 860px) {
   .app { flex-direction: column; }
-  .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px; }
-  .nav { flex-direction: row; flex-wrap: wrap; flex: 1; }
-  .org-switch { margin-top: 0; width: 180px; }
-  .view { padding: 14px; }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .brand { flex: 1 1 auto; min-width: 0; }
+  .brand-logo { width: 38px; height: 38px; }
+  .brand-text strong { font-size: 15px; }
+  .brand-text #brand-subtitle { display: none; }
+
+  /* התפריט עובר לשורה משלו וגולל אופקית, במקום לתפוס חצי מסך בגלישת שורות */
+  .nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a { white-space: nowrap; padding: 8px 12px; }
+
+  .org-switch {
+    margin-top: 0;
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    max-width: 60%;
+  }
+  .org-switch select { width: auto; max-width: 150px; }
+
+  .topbar { padding: 12px 14px; }
+  .topbar h1 { font-size: 18px; }
+  .view { padding: 14px 14px 32px; }
+  .card-grid { gap: 10px; margin-bottom: 16px; }
+  .grid-2 { gap: 14px; }
+
+  /* שדות וכפתורים בגודל נוח למגע */
+  .btn { padding: 9px 15px; }
+  .btn.small { padding: 7px 11px; }
+  input, select, textarea { padding: 9px 10px; font-size: 16px; } /* 16px מונע זום אוטומטי ב-iOS */
+
+  /* טפסים בחלונית עוברים לעמודה אחת */
+  .modal-backdrop { padding: 0; align-items: stretch; }
+  .modal { width: 100%; border-radius: 0; min-height: 100%; }
+  .modal-body .form-grid { grid-template-columns: 1fr; }
+  .modal-foot { position: sticky; bottom: 0; }
 }
 
 /* --- אודות: הלוגו המלא של בית המדרש --- */
