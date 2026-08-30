@@ -107,8 +107,8 @@ async function main() {
   log('  ─────────────────────────────────────');
 
   const [major] = process.versions.node.split('.');
-  if (Number(major) < 20) {
-    fail(`נדרש Node.js בגרסה 20 ומעלה. מותקנת אצלכם גרסה ${process.versions.node}.\n    להורדה: https://nodejs.org`);
+  if (Number(major) < 22) {
+    fail(`נדרש Node.js בגרסה 22 ומעלה. מותקנת אצלכם גרסה ${process.versions.node}.\n    להורדה: https://nodejs.org (גרסת LTS)`);
     return;
   }
 

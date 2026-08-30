@@ -28,7 +28,12 @@
 
 ## הפעלה מהירה
 
-דרוש **Node.js 20 ומעלה** ([nodejs.org](https://nodejs.org) — גרסת LTS).
+דרוש **Node.js 22 ומעלה** ([nodejs.org](https://nodejs.org) — גרסת LTS).
+
+> בהתקנת Node בחלונות מוצגת בסוף אפשרות להתקין *Tools for Native Modules*
+> (Chocolatey, Python ו-Visual Studio Build Tools, כ-7 ג'יגה). **אין בה צורך.**
+> החבילה הבינארית היחידה בפרויקט, `better-sqlite3`, מגיעה עם בינארי מוכן
+> לחלונות בתוך החבילה ואינה מהדרת דבר. אפשר לסגור את החלון הזה.
 
 ```bash
 # שימו לב: שם המאגר מתחיל במקף, ולכן משכפלים לתיקייה בשם רגיל

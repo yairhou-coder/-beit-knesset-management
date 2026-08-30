@@ -5,7 +5,7 @@
   "description": "בית המדרש אנשי מעשה - מערכת ניהול התחייבויות, גבייה, קבלות ועמותות",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "setup": "npm install && npm run seed",
@@ -20,7 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^13.0.3",
     "express": "^4.21.2",
     "zod": "^3.24.1"
   },
