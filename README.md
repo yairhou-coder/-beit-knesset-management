@@ -28,17 +28,29 @@
 
 ## הפעלה מהירה
 
+דרוש **Node.js 20 ומעלה** ([nodejs.org](https://nodejs.org) — גרסת LTS).
+
 ```bash
-npm install
-cp .env.example .env      # אופציונלי — ברירות המחדל עובדות ללא הגדרה
-npm run seed              # נתוני דוגמה, כולל התרחיש של עלייה ב-1,800 ₪
-npm run dev               # http://localhost:3000
+# שימו לב: שם המאגר מתחיל במקף, ולכן משכפלים לתיקייה בשם רגיל
+git clone https://github.com/yairhou-coder/-beit-knesset-management.git beit-knesset
+cd beit-knesset
+
+npm run setup    # מתקין את התלויות ויוצר נתוני דוגמה
+npm run dev      # http://localhost:3000
 ```
+
+הכתובת נפתחת בדפדפן: **http://localhost:3000**
+
+לעצירת השרת: `Ctrl+C`. להפעלה חוזרת: `npm run dev` בלבד — הנתונים נשמרים
+בקובץ `data/beit-knesset.db` ואינם נמחקים.
+
+אם פורט 3000 תפוס: `PORT=3100 npm run dev` (בחלונות: `set PORT=3100 && npm run dev`).
 
 פקודות נוספות:
 
 | פקודה | תיאור |
 | --- | --- |
+| `npm run setup` | התקנה ראשונית: תלויות + נתוני דוגמה |
 | `npm test` | הרצת כל הטסטים (87 טסטים) |
 | `npm run typecheck` | בדיקת טיפוסים |
 | `npm run build` | קומפילציה ל-`dist/` |
