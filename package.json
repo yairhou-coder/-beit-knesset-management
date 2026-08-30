@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "setup": "npm install && npm run seed",
+    "setup": "npm install --ignore-scripts && npm run seed",
     "app": "tsx src/server.ts",
     "launch": "node scripts/launch.mjs",
     "dev": "tsx watch src/server.ts",

@@ -73,11 +73,16 @@ function dependenciesReady() {
   ];
   if (!required.every((relative) => fs.existsSync(path.join(ROOT, relative)))) return false;
 
-  const probe = spawnSync(
+  // טעינת הרכיב המקומפל בפועל
+  const sqlite = spawnSync(
     `node -e "const D=require('better-sqlite3');new D(':memory:').close()"`,
     { cwd: ROOT, shell: true, stdio: 'ignore' },
   );
-  return probe.status === 0;
+  if (sqlite.status !== 0) return false;
+
+  // ו-tsx, שבלעדיו לא ניתן להריץ את קוד המערכת
+  const tsx = spawnSync('npx tsx -e ""', { cwd: ROOT, shell: true, stdio: 'ignore' });
+  return tsx.status === 0;
 }
 
 /** מאתר פורט פנוי, כדי שפורט תפוס לא יפיל את ההפעלה. */
@@ -163,24 +168,31 @@ async function main() {
     log('  אנא אל תסגרו את החלון עד לסיום.');
     log('');
 
-    if (!run('npm install') || !dependenciesReady()) {
-      // התקנה מעל עץ חבילות פגום נכשלת לעיתים בניסיון לבנות מחדש רכיב
-      // מקומפל - בחלונות זה מתבטא בשגיאת node-gyp על היעדר Visual Studio.
-      // התקנה נקייה פותרת זאת, שכן החבילה מגיעה עם בינארי מוכן.
+    // --ignore-scripts מונע מ-npm לנסות לבנות רכיבים מקומפלים.
+    // הרכיב היחיד כזה כאן, better-sqlite3, מגיע עם בינארי מוכן לכל מערכת
+    // הפעלה ואינו זקוק לבנייה. בלי הדגל הזה npm בחלונות מנסה להריץ
+    // node-gyp, ונכשל אצל מי שאין לו Visual Studio מותקן.
+    if (!run('npm install --ignore-scripts') || !dependenciesReady()) {
       log('');
-      log('  ההתקנה נכשלה. מנקה את החבילות ומתקין מחדש מאפס...');
+      log('  מנקה ומתקין מחדש מאפס...');
       if (!removeNodeModules()) {
         fail('לא הצלחתי למחוק את תיקיית node_modules. סגרו חלונות פתוחים ונסו שוב.');
         return;
       }
       log('');
-      if (!run('npm install') || !dependenciesReady()) {
-        fail(
-          'ההתקנה נכשלה גם לאחר ניקוי.\n' +
-            '    בדקו חיבור לאינטרנט ונסו שוב.\n' +
-            '    אם זה חוזר - שלחו את הטקסט שמופיע למעלה.',
-        );
-        return;
+      if (!run('npm install --ignore-scripts') || !dependenciesReady()) {
+        // רשת ביטחון: אם בכל זאת חסר משהו שדורש סקריפט התקנה, ננסה
+        // התקנה רגילה. היא עלולה להיכשל בבנייה, ולכן היא אחרונה בתור.
+        log('');
+        log('  מנסה התקנה מלאה...');
+        if (!run('npm install') || !dependenciesReady()) {
+          fail(
+            'ההתקנה נכשלה.\n' +
+              '    בדקו חיבור לאינטרנט ונסו שוב.\n' +
+              '    אם זה חוזר - שלחו את הטקסט שמופיע למעלה.',
+          );
+          return;
+        }
       }
     }
   }
