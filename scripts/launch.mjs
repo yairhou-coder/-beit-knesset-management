@@ -45,17 +45,39 @@ function run(commandLine) {
 }
 
 /**
- * בודק שהתלויות הדרושות באמת מותקנות, ולא רק שקיימת תיקיית node_modules.
- * נבדקות החבילות שהמערכת נופלת בלעדיהן, ובחלונות גם קובץ ההרצה של tsx.
+ * מוחק את תיקיית החבילות, כדי לאפשר התקנה נקייה.
+ * בחלונות קבצים עשויים להיות נעולים לרגע, ולכן נעשים ניסיונות חוזרים.
+ */
+function removeNodeModules() {
+  const target = path.join(ROOT, 'node_modules');
+  try {
+    fs.rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    return !fs.existsSync(target);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * בודק שההתקנה שלמה ותקינה.
+ *
+ * קיום קבצים אינו מספיק: עץ חבילות פגום עשוי להכיל package.json בלי
+ * הבינארי שלצדו. לכן, מעבר לבדיקת הקבצים, החבילה המקומפלת נטענת בפועל
+ * בתהליך נפרד - זו הבדיקה היחידה שבאמת מוכיחה שהמערכת תוכל לרוץ.
  */
 function dependenciesReady() {
   const required = [
     'node_modules/tsx/package.json',
-    'node_modules/better-sqlite3/package.json',
     'node_modules/express/package.json',
     IS_WINDOWS ? 'node_modules/.bin/tsx.cmd' : 'node_modules/.bin/tsx',
   ];
-  return required.every((relative) => fs.existsSync(path.join(ROOT, relative)));
+  if (!required.every((relative) => fs.existsSync(path.join(ROOT, relative)))) return false;
+
+  const probe = spawnSync(
+    `node -e "const D=require('better-sqlite3');new D(':memory:').close()"`,
+    { cwd: ROOT, shell: true, stdio: 'ignore' },
+  );
+  return probe.status === 0;
 }
 
 /** מאתר פורט פנוי, כדי שפורט תפוס לא יפיל את ההפעלה. */
@@ -136,19 +158,30 @@ async function main() {
   // (למשל סגירת החלון) משאירה תיקייה חלקית, ואז ההרצה נופלת בהמשך על
   // "tsx is not recognized". לכן נבדקות החבילות עצמן.
   if (!dependenciesReady()) {
-    log(fs.existsSync(path.join(ROOT, 'node_modules'))
-      ? '  ההתקנה הקודמת לא הושלמה, משלים אותה...'
-      : '  התקנה ראשונה, זה ייקח כדקה...');
+    const partial = fs.existsSync(path.join(ROOT, 'node_modules'));
+    log(partial ? '  ההתקנה הקודמת לא הושלמה, משלים אותה...' : '  התקנה ראשונה, זה ייקח כדקה...');
     log('  אנא אל תסגרו את החלון עד לסיום.');
     log('');
 
     if (!run('npm install') || !dependenciesReady()) {
-      fail(
-        'ההתקנה לא הושלמה.\n' +
-          '    נסו שוב. אם זה חוזר, מחקו את התיקייה node_modules שבתוך תיקיית\n' +
-          '    הפרויקט והפעילו מחדש.',
-      );
-      return;
+      // התקנה מעל עץ חבילות פגום נכשלת לעיתים בניסיון לבנות מחדש רכיב
+      // מקומפל - בחלונות זה מתבטא בשגיאת node-gyp על היעדר Visual Studio.
+      // התקנה נקייה פותרת זאת, שכן החבילה מגיעה עם בינארי מוכן.
+      log('');
+      log('  ההתקנה נכשלה. מנקה את החבילות ומתקין מחדש מאפס...');
+      if (!removeNodeModules()) {
+        fail('לא הצלחתי למחוק את תיקיית node_modules. סגרו חלונות פתוחים ונסו שוב.');
+        return;
+      }
+      log('');
+      if (!run('npm install') || !dependenciesReady()) {
+        fail(
+          'ההתקנה נכשלה גם לאחר ניקוי.\n' +
+            '    בדקו חיבור לאינטרנט ונסו שוב.\n' +
+            '    אם זה חוזר - שלחו את הטקסט שמופיע למעלה.',
+        );
+        return;
+      }
     }
   }
 
@@ -157,7 +190,10 @@ async function main() {
   if (!fs.existsSync(dbFile)) {
     log('  יוצר את בסיס הנתונים...');
     if (!run('npm run seed')) {
-      fail('יצירת בסיס הנתונים נכשלה.');
+      fail(
+        'יצירת בסיס הנתונים נכשלה.\n' +
+          '    נסו להפעיל שוב. אם זה חוזר - שלחו את הטקסט שמופיע למעלה.',
+      );
       return;
     }
   }
