@@ -28,16 +28,16 @@ export async function seed(db: Db): Promise<void> {
 
   // --- עמותות (סעיף 25) -----------------------------------------------------
   const synagogue = createOrganization(db, {
-    name: 'בית הכנסת',
-    shortName: 'ביה"כ',
+    name: 'בית המדרש אנשי מעשה',
+    shortName: 'אנשי מעשה',
     legalNumber: '580123456',
     address: 'רחוב הרב קוק 12',
     phone: '02-5551234',
-    email: 'gabai@beit-knesset.example',
+    email: 'gabai@anshei-maase.example',
     bankName: 'בנק הפועלים',
     bankBranch: '123',
     bankAccount: '456789',
-    accountHolder: 'עמותת בית הכנסת',
+    accountHolder: 'עמותת בית המדרש אנשי מעשה',
     allowedDocumentTypes: ['receipt', 'donation_receipt'],
     defaultDocumentType: 'receipt',
     receiptIssueMode: 'automatic',

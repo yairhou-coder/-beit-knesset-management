@@ -7,7 +7,7 @@ const app = createApp(db);
 
 const server = app.listen(config.port, () => {
   // eslint-disable-next-line no-console
-  console.log(`מערכת ניהול בית הכנסת פועלת על http://localhost:${config.port}`);
+  console.log(`בית המדרש אנשי מעשה - מערכת הניהול פועלת על http://localhost:${config.port}`);
 });
 
 function shutdown(signal: string): void {

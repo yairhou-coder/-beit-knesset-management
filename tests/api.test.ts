@@ -127,7 +127,11 @@ describe('API', () => {
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain('dir="rtl"');
-    expect(html).toContain('מערכת ניהול בית הכנסת');
+    expect(html).toContain('אנשי מעשה');
+    // הלוגו של בית המדרש מוגש כנכס סטטי.
+    const logo = await fetch(`${baseUrl}/assets/logo.jpg`);
+    expect(logo.status).toBe(200);
+    expect(logo.headers.get('content-type')).toContain('image/jpeg');
   });
 
   it('מוריד PDF של קבלה', async () => {

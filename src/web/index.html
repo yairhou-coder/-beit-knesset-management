@@ -3,21 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>מערכת ניהול בית הכנסת</title>
-    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
+    <title>בית המדרש אנשי מעשה — ניהול קהילה וגבייה</title>
+    <link rel="icon" href="/assets/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/assets/logo-mark.png" />
     <link rel="stylesheet" href="/css/app.css" />
   </head>
   <body>
     <div class="app">
       <aside class="sidebar">
-        <div class="brand">
-          <!-- לוגו הקהילה. להחלפה: src/web/assets/logo.svg -->
-          <img src="/assets/logo.svg" alt="לוגו הקהילה" class="brand-logo" />
+        <a class="brand" href="#/dashboard">
+          <!--
+            סמל הלוגו בלבד. הלוגו המלא, הכולל את שם בית המדרש ואת הקדשת הלע"נ,
+            נמצא ב-src/web/assets/logo.jpg ומוצג במסך "אודות המערכת".
+          -->
+          <img src="/assets/logo-mark.png" alt="" class="brand-logo" />
           <div class="brand-text">
-            <strong>ניהול בית הכנסת</strong>
-            <span id="brand-subtitle">קהילה, גבייה וכספים</span>
+            <span class="brand-kicker">בית המדרש</span>
+            <strong>אנשי מעשה</strong>
+            <span id="brand-subtitle">ניהול קהילה וגבייה</span>
           </div>
-        </div>
+        </a>
 
         <nav class="nav" id="nav">
           <a href="#/dashboard" data-route="dashboard">דשבורד</a>
@@ -32,6 +37,7 @@
           <a href="#/organizations" data-route="organizations">עמותות</a>
           <a href="#/notifications" data-route="notifications">תזכורות</a>
           <a href="#/alerts" data-route="alerts">התראות מנהל</a>
+          <a href="#/about" data-route="about">אודות</a>
         </nav>
 
         <div class="org-switch">

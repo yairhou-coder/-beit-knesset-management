@@ -29,6 +29,7 @@ import {
   renderMembersList,
 } from './pages/members.js';
 import { bindOrganizations, renderOrganizations } from './pages/organizations.js';
+import { renderAbout } from './pages/about.js';
 import { openCommitmentModal, openPaymentModal } from './pages/paymentForm.js';
 
 const view = document.getElementById('view');
@@ -48,6 +49,7 @@ const TITLES = {
   organizations: 'עמותות',
   notifications: 'תזכורות',
   alerts: 'התראות מנהל',
+  about: 'אודות המערכת',
 };
 
 /** כפתורי הפעולה בראש כל מסך. */
@@ -89,7 +91,7 @@ function setActiveNav(route) {
     link.classList.toggle('active', link.dataset.route === key);
   });
   const isMemberCard = key === 'members' && route.segments.length > 1;
-  titleEl.textContent = isMemberCard ? 'כרטיס חבר' : (TITLES[key] ?? 'מערכת ניהול בית הכנסת');
+  titleEl.textContent = isMemberCard ? 'כרטיס חבר' : (TITLES[key] ?? 'בית המדרש אנשי מעשה');
 }
 
 /** עוטף מסך: מציג טעינה, מרנדר, ומחבר מאזינים. */
@@ -161,6 +163,7 @@ async function bootstrap() {
   register('organizations', page(renderOrganizations, bindOrganizations));
   register('notifications', page(renderNotifications, bindNotifications));
   register('alerts', page(renderAlerts, bindAlerts));
+  register('about', page(renderAbout));
 
   setNotFound(() => {
     view.innerHTML = '<div class="section"><div class="empty">המסך המבוקש לא נמצא</div></div>';
