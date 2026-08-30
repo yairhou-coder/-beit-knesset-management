@@ -1,4 +1,4 @@
-# יוצר קיצור דרך למערכת בשולחן העבודה, עם הלוגו של בית המדרש.
+﻿# יוצר קיצור דרך למערכת בשולחן העבודה, עם הלוגו של בית המדרש.
 # הרצה:  powershell -ExecutionPolicy Bypass -File scripts\create-shortcut.ps1
 
 $ErrorActionPreference = 'Stop'
