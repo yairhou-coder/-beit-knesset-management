@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>מערכת ניהול בית הכנסת</title>
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <!-- לוגו הקהילה. להחלפה: src/web/assets/logo.svg -->
+          <img src="/assets/logo.svg" alt="לוגו הקהילה" class="brand-logo" />
+          <div class="brand-text">
+            <strong>ניהול בית הכנסת</strong>
+            <span id="brand-subtitle">קהילה, גבייה וכספים</span>
+          </div>
+        </div>
+
+        <nav class="nav" id="nav">
+          <a href="#/dashboard" data-route="dashboard">דשבורד</a>
+          <a href="#/collections" data-route="collections">גבייה וחובות</a>
+          <a href="#/commitments" data-route="commitments">התחייבויות</a>
+          <a href="#/payments" data-route="payments">תשלומים</a>
+          <a href="#/incomes" data-route="incomes">הכנסות</a>
+          <a href="#/receipts" data-route="receipts">קבלות ומסמכים</a>
+          <a href="#/members" data-route="members">חברי קהילה</a>
+          <a href="#/standing-orders" data-route="standing-orders">הוראות קבע</a>
+          <a href="#/reports" data-route="reports">דוחות</a>
+          <a href="#/organizations" data-route="organizations">עמותות</a>
+          <a href="#/notifications" data-route="notifications">תזכורות</a>
+          <a href="#/alerts" data-route="alerts">התראות מנהל</a>
+        </nav>
+
+        <div class="org-switch">
+          <label for="org-filter">עמותה</label>
+          <select id="org-filter"></select>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <h1 id="page-title">דשבורד</h1>
+          <div id="page-actions" class="page-actions"></div>
+        </header>
+        <div id="view" class="view"></div>
+      </main>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

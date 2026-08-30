@@ -1,0 +1,281 @@
+# מערכת ניהול בית כנסת — התחייבויות, גבייה, קבלות ועמותות
+
+מערכת לניהול הפעילות הכספית של קהילת בית הכנסת: התחייבויות חברים, גבייה וחובות,
+תשלומים, הכנסות, קבלות ומסמכים כספיים — בהפרדה מלאה בין העמותות.
+
+> **הערה על הלוגו:** קובץ הלוגו לא צורף לפנייה, ולכן נוצר לוגו זמני
+> ב-`src/web/assets/logo.svg`. להחלפה: החליפו את הקובץ בלוגו של הקהילה
+> (SVG מומלץ, או PNG שקוף בגודל 256×256 ומעלה ועדכון הנתיב ב-`src/web/index.html`).
+
+---
+
+## הפעלה מהירה
+
+```bash
+npm install
+cp .env.example .env      # אופציונלי — ברירות המחדל עובדות ללא הגדרה
+npm run seed              # נתוני דוגמה, כולל התרחיש של עלייה ב-1,800 ₪
+npm run dev               # http://localhost:3000
+```
+
+פקודות נוספות:
+
+| פקודה | תיאור |
+| --- | --- |
+| `npm test` | הרצת כל הטסטים (87 טסטים) |
+| `npm run typecheck` | בדיקת טיפוסים |
+| `npm run build` | קומפילציה ל-`dist/` |
+| `npm start` | הרצת הגרסה המקומפלת |
+
+---
+
+## עקרונות הליבה
+
+### 1. התחייבות איננה הכנסה
+
+זהו העיקרון המרכזי של המערכת. ארבע ישויות **נפרדות**, כל אחת בטבלה משלה:
+
+| ישות | טבלה | משמעות |
+| --- | --- | --- |
+| **Commitment** | `commitments` | חוב שנוצר. **אינו** הכנסה. |
+| **Payment** | `payments` | כסף שהתקבל בפועל. |
+| **Income** | `incomes` | הכנסה — נרשמת **רק** כשמתקבל תשלום. |
+| **Receipt** | `receipts` | מסמך שהופק מול ספק חיצוני. |
+
+בזכות ההפרדה, הדוחות מבדילים בין **התחייבויות**, **כספים שנגבו בפועל** ו**יתרות שטרם נגבו**.
+
+### 2. כל סכום נשמר באגורות שלמות
+
+כל שדה כספי הוא `INTEGER` באגורות (`amount_agorot`). אין שימוש ב-`REAL` לכסף,
+ולכן אין שגיאות עיגול. ההמרה לשקלים נעשית בשכבת התצוגה בלבד.
+
+ה-API מקבל `amountAgorot` (מספר שלם) או `amountShekels` (לנוחות), ומחזיר תמיד אגורות.
+
+### 3. הפרדה מוחלטת בין העמותות
+
+לכל רשומה כספית — התחייבות, תשלום, הכנסה, קבלה, הוצאה, הוראת קבע — יש `organization_id`.
+לכל עמותה הגדרות משלה: פרטי חשבון, ספקי סליקה/קבלות/הודעות, מפתחות API,
+סוגי מסמכים מותרים ואופן הפקת קבלות. הדוחות מציגים כל עמותה בנפרד ובנוסף תמונה מאוחדת
+— שהיא **סכימה** של העמותות, לא ערבוב שלהן.
+
+---
+
+## תהליך התשלום המלא
+
+התרחיש מהאפיון, כפי שהמערכת מממשת אותו:
+
+```
+שלב 1  נוצרת התחייבות                    התחייב 1,800 · שולם 0     · יתרה 1,800 · פתוח
+שלב 2  מתקבל תשלום 1,000 ₪                התחייב 1,800 · שולם 1,000 · יתרה 800   · שולם חלקית
+       ├─ נרשמת הכנסה על 1,000 ₪
+       └─ מופקת קבלה על 1,000 ₪
+שלב 3  מתקבל תשלום 800 ₪                  התחייב 1,800 · שולם 1,800 · יתרה 0     · שולם במלואו
+       ├─ נרשמת הכנסה נוספת על 800 ₪
+       └─ מופקת קבלה נוספת
+```
+
+הכול דרך קריאה אחת: `POST /api/payments`.
+
+**מה קורה מתחת לפני השטח** (`src/services/payments.ts`):
+
+1. **בתוך טרנזקציה אחת:** נרשם התשלום → מחושבת מחדש יתרת ההתחייבות → נרשמת ההכנסה →
+   נוצרת רשומת הקבלה בסטטוס "ממתין".
+2. **אחרי ה-commit:** מתבצעת הקריאה לספק הקבלות.
+
+הסדר הזה הוא מה שמבטיח שכשל אצל ספק חיצוני לעולם לא ימחק תשלום או הכנסה.
+
+הסכום ששולם **מחושב מחדש** מסכום התשלומים שהושלמו (`recalculateCommitmentTotals`)
+ולא מתעדכן בהפרשים, כך שגם זיכוי או תיקון מביאים ליתרה נכונה. עמודת היתרה
+(`balance_agorot`) היא עמודה מחושבת ב-SQLite ואינה יכולה לצאת מסנכרון.
+
+---
+
+## טיפול בכשלים
+
+אם ספק הקבלות אינו זמין:
+
+| מה קורה | מה **לא** קורה |
+| --- | --- |
+| ✅ התשלום נשמר | ❌ התשלום אינו נמחק |
+| ✅ ההכנסה נרשמת | ❌ ההכנסה אינה אובדת |
+| ✅ הקבלה נשארת "ממתין להפקה" | ❌ אין קבלה כפולה |
+| ✅ נוצרת התראה למנהל | |
+| ✅ ניתן לנסות שוב, בודד או מרוכז | |
+
+### מניעת קבלות כפולות — שלוש שכבות
+
+1. **`payments.idempotency_key`** — `UNIQUE`. רישום חוזר של אותו תשלום מחזיר את
+   הרשומה הקיימת ואינו יוצר תשלום, הכנסה או קבלה נוספים.
+2. **`receipts(payment_id) WHERE status != 'cancelled'`** — אינדקס ייחודי חלקי.
+   לתשלום יכולה להיות קבלה פעילה אחת בלבד; קבלה שבוטלה אינה חוסמת הפקת קבלה חלופית.
+3. **`receipts.idempotency_key`** — נשלח לספק. הספק מחויב להחזיר את אותה קבלה
+   עבור אותו מפתח. רשומת הקבלה נוצרת **לפני** הקריאה לספק, כך שגם אם התשובה
+   אובדת בדרך — הניסיון הבא ישתמש באותו מפתח ולא ייווצר מסמך שני.
+
+### קבלה אוטומטית או באישור ידני
+
+נקבע **לכל עמותה בנפרד** (`organizations.receipt_issue_mode`):
+
+- `automatic` — הקבלה מופקת מיד עם קבלת התשלום.
+- `manual_approval` — הקבלה נשמרת בסטטוס "ממתין לאישור" עד לאישור גזבר/מנהל.
+  ההכנסה נרשמת בכל מקרה.
+
+---
+
+## Integration Layer
+
+הלוגיקה המרכזית מדברת אך ורק מול הממשקים שב-`src/integrations/types.ts`,
+ולעולם לא מול ספק ספציפי.
+
+```
+ReceiptProvider       createReceipt · getReceipt · cancelReceipt
+                      downloadReceipt · checkReceiptStatus
+
+PaymentProvider       charge · getPaymentStatus · refund
+                      createSubscription · getSubscriptionStatus · cancelSubscription
+                      parseWebhook  (כולל אימות חתימה)
+
+NotificationProvider  send  (WhatsApp / SMS / Email)
+```
+
+**חיבור ספק אמיתי** — מימוש הממשק ורישום ב-`src/integrations/registry.ts`:
+
+```ts
+receiptProviders.register('greeninvoice', (orgId, config) =>
+  new GreenInvoiceProvider(config),
+);
+```
+
+ואז בהגדרות העמותה: `receiptProvider: 'greeninvoice'` + `receiptConfig` עם פרטי ה-API.
+**אין צורך לשנות שורה אחת בשירותים.**
+
+בשלב זה משמשים **Mock Providers מלאים** המאפשרים בדיקה מקצה לקצה, כולל מסלולי כשל:
+מספור קבלות רץ, יצירת PDF תקין, ביטול, בדיקת סטטוס, כרטיס שנדחה, פג תוקף כרטיס,
+ו-Webhooks חתומים.
+
+### Webhooks
+
+`POST /api/organizations/:id/webhooks/payments`
+
+הגוף הגולמי נשמר לצורך אימות החתימה. כל אירוע נרשם ב-`provider_webhook_events`,
+ואירוע שכבר עובד אינו מעובד שוב. אירועים נתמכים: הצלחת/כשל תשלום, זיכוי,
+סטטוס וביטול הוראת קבע, ופג תוקף כרטיס.
+
+---
+
+## תזכורות לחברים
+
+התשתית בנויה במלואה (`src/services/notifications.ts`): תבניות הודעה, תור הודעות,
+בחירת ערוץ לפי העדפת החבר, ומעקב אחר סטטוס ושגיאות.
+
+ללא Integration פעיל ההודעות נשמרות בתור בסטטוס "בתור לשליחה" ואינן נשלחות בפועל.
+חיבור ספק WhatsApp / SMS / Email בעתיד אינו מצריך שינוי בלוגיקה — רק מימוש
+`NotificationProvider` ורישומו.
+
+---
+
+## המסכים
+
+| מסך | מה יש בו |
+| --- | --- |
+| **דשבורד** | סך החובות הפתוחים · חברים עם חוב · חובות ישנים · נגבה החודש בגין חובות קודמים · אזור גבייה מלא |
+| **גבייה וחובות** | מי חייב וכמה · כמה זמן החוב פתוח · פילוח לפי עמותה/אירוע/סוג · סינון מלא |
+| **התחייבויות** | רשימה מלאה עם יתרות וסטטוסים |
+| **תשלומים** | כולל שיוך תשלומים "יתומים" לחבר |
+| **הכנסות** | כולל כל שדות הקבלה |
+| **קבלות ומסמכים** | חיפוש לפי שם, מספר קבלה, תאריך, סכום, סוג תשלום, עמותה, סטטוס · הורדת PDF · אישור והפקה חוזרת |
+| **כרטיס חבר** | כל ההתחייבויות, התשלומים, ההכנסות והקבלות שהופקו עבורו |
+| **עמותות** | הגדרות מלאות, כולל אופן הפקת קבלות וסוגי מסמכים |
+| **דוחות** | כל עמותה בנפרד + תמונה מאוחדת |
+| **תזכורות / התראות מנהל** | תור ההודעות וכשלים הדורשים טיפול |
+
+כל כרטיס בדשבורד הוא קישור לרשימה המסוננת המתאימה.
+
+---
+
+## API
+
+```
+GET    /api/dashboard                      דשבורד + אזור גבייה
+GET    /api/dashboard/report               דוח לפי עמותה + מאוחד
+GET    /api/dashboard/alerts               התראות למנהל
+
+GET    /api/collections                    מסך הגבייה בקריאה אחת
+GET    /api/collections/debtors            מי חייב כסף
+GET    /api/collections/aging              גיל החוב
+GET    /api/collections/by-{organization|event|type}
+
+GET    /api/commitments                    סינון: memberSearch, organizationId,
+POST   /api/commitments                      commitmentTypeId, eventId, status,
+POST   /api/commitments/:id/cancel           minAgeDays, fromDate, toDate, סכומים
+
+POST   /api/payments                       ← הצומת המרכזי של תהליך התשלום
+POST   /api/payments/:id/assign            שיוך תשלום לחבר
+POST   /api/payments/:id/refund
+
+GET    /api/receipts                       סינון: memberSearch, receiptNumber,
+POST   /api/receipts/:id/retry               organizationId, paymentMethod,
+POST   /api/receipts/:id/approve             status, תאריכים, סכומים
+POST   /api/receipts/:id/cancel
+GET    /api/receipts/:id/pdf
+POST   /api/receipts/retry-all
+
+GET    /api/members/:id/card               כרטיס חבר מלא
+GET    /api/members/:id/receipts           כל הקבלות של החבר
+
+GET    /api/organizations
+PATCH  /api/organizations/:id
+POST   /api/organizations/:id/webhooks/payments
+
+POST   /api/notifications/debt-reminder
+POST   /api/notifications/debt-reminders/bulk
+
+POST   /api/standing-orders/:id/charge     חיוב חודשי (idempotent לפי חודש)
+```
+
+---
+
+## מבנה הקוד
+
+```
+src/
+├── domain/          money.ts (אגורות) · types.ts (סטטוסים ותוויות)
+├── db/              schema.sql · index.ts · seed.ts
+├── integrations/    types.ts ← הממשקים
+│   ├── registry.ts  רישום ופתרון ספק לכל עמותה
+│   ├── receipts/    mock.ts
+│   ├── payments/    mock.ts
+│   └── notifications/ mock.ts
+├── services/        commitments · payments · receipts · incomes
+│                    collections · dashboard · memberCard
+│                    notifications · standingOrders · webhooks · alerts
+├── routes/          REST API
+└── web/             ממשק RTL בעברית (ללא שלב build)
+
+tests/               87 טסטים
+```
+
+---
+
+## מה נבדק
+
+| קובץ | נושא |
+| --- | --- |
+| `workflow.test.ts` | התרחיש 1,800 → 1,000 → 800 · הפרדה בין התחייבות להכנסה · זיכוי |
+| `receipts.test.ts` | ספק לא זמין · ניסיון חוזר · Idempotency · אוטומטי מול אישור ידני |
+| `organizations.test.ts` | הפרדה בין עמותות · דוח מאוחד · סוגי מסמכים |
+| `collections.test.ts` | גיל החוב · חובות 30/60 יום · כרטיסי הדשבורד · סינונים |
+| `integrations.test.ts` | הממשקים · Webhooks · הוראות קבע · רישום ספק חדש |
+| `members.test.ts` | כרטיס חבר · תשלומים לא משויכים · תזכורות |
+| `money.test.ts` | אגורות שלמות · העדר שגיאות עיגול |
+| `api.test.ts` | התהליך המלא דרך HTTP |
+
+---
+
+## הרחבות אפשריות
+
+- חיבור ספק קבלות אמיתי (ירוק בעיניים / חשבונית ירוקה / EZcount) — מימוש `ReceiptProvider`.
+- חיבור ספק סליקה אמיתי — מימוש `PaymentProvider` + הפניית ה-Webhook.
+- חיבור WhatsApp/SMS — מימוש `NotificationProvider`.
+- הרצה מתוזמנת של חיובי הוראות קבע ושל תזכורות חוב.
+- הרשאות משתמשים (גבאי / גזבר / מנהל).
