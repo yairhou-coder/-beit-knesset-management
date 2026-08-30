@@ -18,7 +18,6 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IS_WINDOWS = process.platform === 'win32';
-const NPM = IS_WINDOWS ? 'npm.cmd' : 'npm';
 
 function log(message) {
   process.stdout.write(`${message}\n`);
@@ -29,14 +28,34 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-/** מריץ פקודה ומחכה לסיומה. מחזיר true אם הצליחה. */
-function run(command, args) {
-  const result = spawnSync(command, args, {
+/**
+ * מריץ פקודה ומחכה לסיומה. מחזיר true אם הצליחה.
+ *
+ * הפקודה מועברת כמחרוזת אחת ולא כמערך ארגומנטים: בחלונות npm הוא קובץ
+ * אצווה ומחייב shell, ושילוב של shell עם מערך ארגומנטים מפיק ב-Node 22+
+ * אזהרת DEP0190. כל הפקודות כאן קבועות בקוד, ולכן אין כאן קלט חיצוני.
+ */
+function run(commandLine) {
+  const result = spawnSync(commandLine, {
     cwd: ROOT,
     stdio: 'inherit',
-    shell: IS_WINDOWS, // בחלונות npm הוא קובץ אצווה ודורש shell
+    shell: true,
   });
   return result.status === 0;
+}
+
+/**
+ * בודק שהתלויות הדרושות באמת מותקנות, ולא רק שקיימת תיקיית node_modules.
+ * נבדקות החבילות שהמערכת נופלת בלעדיהן, ובחלונות גם קובץ ההרצה של tsx.
+ */
+function dependenciesReady() {
+  const required = [
+    'node_modules/tsx/package.json',
+    'node_modules/better-sqlite3/package.json',
+    'node_modules/express/package.json',
+    IS_WINDOWS ? 'node_modules/.bin/tsx.cmd' : 'node_modules/.bin/tsx',
+  ];
+  return required.every((relative) => fs.existsSync(path.join(ROOT, relative)));
 }
 
 /** מאתר פורט פנוי, כדי שפורט תפוס לא יפיל את ההפעלה. */
@@ -112,11 +131,23 @@ async function main() {
     return;
   }
 
-  // התקנה ראשונה של התלויות
-  if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
-    log('  התקנה ראשונה, זה ייקח כדקה...');
-    if (!run(NPM, ['install'])) {
-      fail('ההתקנה נכשלה. בדקו חיבור לאינטרנט ונסו שוב.');
+  // התקנת התלויות.
+  // בדיקת קיום התיקייה node_modules אינה מספיקה: התקנה שנקטעה באמצע
+  // (למשל סגירת החלון) משאירה תיקייה חלקית, ואז ההרצה נופלת בהמשך על
+  // "tsx is not recognized". לכן נבדקות החבילות עצמן.
+  if (!dependenciesReady()) {
+    log(fs.existsSync(path.join(ROOT, 'node_modules'))
+      ? '  ההתקנה הקודמת לא הושלמה, משלים אותה...'
+      : '  התקנה ראשונה, זה ייקח כדקה...');
+    log('  אנא אל תסגרו את החלון עד לסיום.');
+    log('');
+
+    if (!run('npm install') || !dependenciesReady()) {
+      fail(
+        'ההתקנה לא הושלמה.\n' +
+          '    נסו שוב. אם זה חוזר, מחקו את התיקייה node_modules שבתוך תיקיית\n' +
+          '    הפרויקט והפעילו מחדש.',
+      );
       return;
     }
   }
@@ -125,7 +156,7 @@ async function main() {
   const dbFile = path.join(ROOT, 'data', 'beit-knesset.db');
   if (!fs.existsSync(dbFile)) {
     log('  יוצר את בסיס הנתונים...');
-    if (!run(NPM, ['run', 'seed'])) {
+    if (!run('npm run seed')) {
       fail('יצירת בסיס הנתונים נכשלה.');
       return;
     }
@@ -135,11 +166,11 @@ async function main() {
   const url = `http://localhost:${port}`;
 
   log('  מפעיל את המערכת...');
-  const server = spawn(NPM, ['run', 'app'], {
+  const server = spawn('npm run app', {
     cwd: ROOT,
     env: { ...process.env, PORT: String(port) },
     stdio: 'inherit',
-    shell: IS_WINDOWS,
+    shell: true,
   });
 
   server.on('exit', (code) => {
