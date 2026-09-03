@@ -221,7 +221,13 @@ export async function recordPayment(db: Db, input: RecordPaymentInput): Promise<
     if (memberId !== null && memberId !== commitment.member_id) {
       throw new ValidationError('החבר בתשלום אינו תואם את החבר בהתחייבות');
     }
-    if (status === 'completed' && input.amountAgorot > commitment.balance_agorot) {
+    // כשהסכום הכולל של ההתחייבות אינו ידוע אין יתרה לחסום מולה. הסכום
+    // הרשום שם הוא רק המצטבר ששולם, וחסימה מולו הייתה דוחה כל תשלום.
+    if (
+      commitment.amount_confirmed === 1 &&
+      status === 'completed' &&
+      input.amountAgorot > commitment.balance_agorot
+    ) {
       throw new ValidationError(
         `סכום התשלום (${input.amountAgorot / 100} ₪) גבוה מיתרת ההתחייבות (${commitment.balance_agorot / 100} ₪)`,
       );

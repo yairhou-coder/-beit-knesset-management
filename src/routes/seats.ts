@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Db } from '../db/index.js';
 import type { PaymentMethod } from '../domain/types.js';
 import {
+  confirmSeatAmount,
   createSeatCommitment,
   getSeatSummary,
   listSeatCommitments,
@@ -27,7 +28,9 @@ function parseFilters(query: Record<string, unknown>): SeatFilters {
   const memberSearch = optionalString(query['memberSearch'] ?? query['search']);
   if (memberSearch) filters.memberSearch = memberSearch;
   const state = optionalString(query['state']);
-  if (state === 'outstanding' || state === 'paid' || state === 'all') filters.state = state;
+  if (state === 'outstanding' || state === 'paid' || state === 'unknown' || state === 'all') {
+    filters.state = state;
+  }
   const mode = optionalString(query['paymentMode']);
   if (mode) filters.paymentMode = mode as SeatPaymentMode;
   return filters;
@@ -53,7 +56,14 @@ export function createSeatsRouter(db: Db): Router {
       const result = await createSeatCommitment(db, {
         memberId: intParam(input['memberId'], 'memberId'),
         organizationId: intParam(input['organizationId'], 'organizationId'),
-        amountAgorot: readAmountAgorot(input, 'סכום ההתחייבות'),
+        // הסכום הכולל אינו חובה: אצל חלק מהחברים הוא פשוט אינו ידוע.
+        amountAgorot:
+          input['amountAgorot'] === undefined &&
+          (input['amountShekels'] === undefined ||
+            input['amountShekels'] === null ||
+            input['amountShekels'] === '')
+            ? null
+            : readAmountAgorot(input, 'סכום ההתחייבות'),
         paymentMode: mode,
         ...(optionalString(input['commitmentDate'])
           ? { commitmentDate: optionalString(input['commitmentDate'])! }
@@ -83,6 +93,19 @@ export function createSeatsRouter(db: Db): Router {
       res.status(201).json(result);
     }),
   );
+
+  /** הזנת הסכום הכולל שסוכם עם החבר, כשהוא נודע. */
+  router.post('/:id/amount', (req, res) => {
+    const input = body(req);
+    res.json({
+      item: confirmSeatAmount(
+        db,
+        intParam(req.params['id'], 'id'),
+        readAmountAgorot(input, 'סכום ההתחייבות'),
+        { instalmentsCount: optionalInt(input['instalmentsCount']) ?? null },
+      ),
+    });
+  });
 
   router.patch('/:id', (req, res) => {
     const input = body(req);

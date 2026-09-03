@@ -45,41 +45,65 @@ export async function renderSeats(route) {
   const cards = `
     <div class="card-grid" style="margin:0">
       ${statCard({
-        title: 'סך ההתחייבויות',
-        amountAgorot: summary.committedAgorot,
-        count: summary.count,
-        tone: 'neutral',
+        title: 'שולם עד היום',
+        amountAgorot: summary.paidAgorot,
+        tone: 'positive',
         hint: `${number(summary.count)} התחייבויות`,
         link: '#/seats',
       })}
       ${statCard({
-        title: 'שולם עד היום',
-        amountAgorot: summary.paidAgorot,
-        tone: 'positive',
-        hint: `${number(summary.settledCount)} סיימו לשלם`,
-        link: '#/seats?state=paid',
+        title: 'סך ההתחייבויות הידועות',
+        amountAgorot: summary.committedAgorot,
+        tone: 'neutral',
+        hint:
+          summary.unknownAmountCount > 0
+            ? `לא כולל ${number(summary.unknownAmountCount)} שסכומם טרם הוזן`
+            : 'כל הסכומים הוזנו',
+        link: '#/seats',
       })}
       ${statCard({
         title: 'יתרה לגבייה',
         amountAgorot: summary.balanceAgorot,
         tone: 'warning',
-        hint: `${number(summary.inProgressCount)} באמצע תשלומים`,
+        hint:
+          summary.unknownAmountCount > 0
+            ? 'חלקית - חסרים סכומים'
+            : `${number(summary.inProgressCount)} באמצע תשלומים`,
         link: '#/seats?state=outstanding',
       })}
       ${statCard({
-        title: 'צפי גבייה חודשי',
-        amountAgorot: summary.monthlyExpectedAgorot,
-        tone: 'neutral',
-        hint: 'מהוראות הקבע הפעילות של המקומות',
-        link: '#/seats?paymentMode=standing_order',
+        title: 'סכום כולל טרם הוזן',
+        count: summary.unknownAmountCount,
+        tone: summary.unknownAmountCount > 0 ? 'warning' : 'positive',
+        hint: `שולם עד היום ${money(summary.unknownAmountPaidAgorot)}`,
+        link: '#/seats?state=unknown',
       })}
-    </div>`;
+    </div>
+    <p class="small muted" style="padding:4px">
+      צפי גבייה חודשי מהוראות הקבע הפעילות של המקומות:
+      <strong>${money(summary.monthlyExpectedAgorot)}</strong>
+    </p>`;
 
   const modeRows = table(
     [
       { header: 'אופן תשלום', cell: (row) => esc(row.label) },
       { header: 'חברים', className: 'num', cell: (row) => number(row.count) },
-      { header: 'יתרה', className: 'num', cell: (row) => money(row.balanceAgorot) },
+      {
+        header: 'יתרה ידועה',
+        className: 'num',
+        cell: (row) =>
+          row.unknownAmountCount === row.count
+            ? '<span class="muted">—</span>'
+            : money(row.balanceAgorot),
+      },
+      {
+        header: 'ללא סכום',
+        className: 'num',
+        cell: (row) =>
+          row.unknownAmountCount > 0
+            ? `<span class="badge warning">${number(row.unknownAmountCount)}</span>`
+            : '<span class="muted">—</span>',
+      },
       {
         header: '',
         cell: (row) => `<a class="small" href="#/seats?paymentMode=${row.mode}">הצגה</a>`,
@@ -99,6 +123,7 @@ export async function renderSeats(route) {
            <option value="">הכל</option>
            <option value="outstanding"${params.state === 'outstanding' ? ' selected' : ''}>נותרה יתרה</option>
            <option value="paid"${params.state === 'paid' ? ' selected' : ''}>שולם במלואו</option>
+           <option value="unknown"${params.state === 'unknown' ? ' selected' : ''}>סכום כולל טרם הוזן</option>
          </select>`,
       )}
       ${field(
@@ -126,7 +151,11 @@ export async function renderSeats(route) {
       {
         header: 'התחייב',
         className: 'num',
-        cell: (row) => `<strong>${money(row.amountAgorot)}</strong>`,
+        // סכום שלא הוזן מוצג ככזה. מספר משוער היה נראה בדיוק כמו אמיתי.
+        cell: (row) =>
+          row.amountConfirmed
+            ? `<strong>${money(row.amountAgorot)}</strong>`
+            : `<button class="btn small" data-amount="${row.commitmentId}">הזנת סכום</button>`,
       },
       {
         header: 'תשלום חודשי',
@@ -136,24 +165,32 @@ export async function renderSeats(route) {
       {
         header: 'תשלומים',
         className: 'num',
+        // "20 מתוך 30" ולא "20 / 30": בטקסט מימין לשמאל שני מספרים משני
+        // צדי לוכסן מתהפכים בתצוגה, ו-20 מתוך 30 נקרא כ-30 מתוך 20.
         cell: (row) =>
           row.instalmentsCount
-            ? `${number(row.instalmentsPaid)} / ${number(row.instalmentsCount)}`
-            : number(row.instalmentsPaid),
+            ? `${number(row.instalmentsPaid)} מתוך ${number(row.instalmentsCount)}`
+            : `${number(row.instalmentsPaid)}<div class="small muted">עד היום</div>`,
       },
       { header: 'תשלום ראשון', cell: (row) => (row.firstPaymentDate ? date(row.firstPaymentDate) : '—') },
       { header: 'יום חיוב', className: 'num', cell: (row) => (row.dayOfMonth ? number(row.dayOfMonth) : '—') },
       { header: 'חיוב הבא', cell: (row) => (row.nextChargeDate ? date(row.nextChargeDate) : '—') },
-      { header: 'שולם', className: 'num', cell: (row) => money(row.paidAgorot) },
+      { header: 'שולם', className: 'num', cell: (row) => `<strong>${money(row.paidAgorot)}</strong>` },
       {
         header: 'יתרה',
         className: 'num',
-        cell: (row) =>
-          row.balanceAgorot > 0
+        cell: (row) => {
+          if (!row.amountConfirmed) return '<span class="badge warning">לא ידוע</span>';
+          return row.balanceAgorot > 0
             ? `<strong>${money(row.balanceAgorot)}</strong>`
-            : '<span class="badge positive">שולם</span>',
+            : '<span class="badge positive">שולם</span>';
+        },
       },
-      { header: 'התקדמות', cell: (row) => progressBar(row.paidAgorot, row.amountAgorot) },
+      {
+        header: 'התקדמות',
+        cell: (row) =>
+          row.amountConfirmed ? progressBar(row.paidAgorot, row.amountAgorot) : '<span class="muted">—</span>',
+      },
       {
         header: 'אופן תשלום',
         cell: (row) => badge(row.paymentModeLabel, MODE_TONE[row.paymentMode] ?? 'neutral'),
@@ -161,7 +198,7 @@ export async function renderSeats(route) {
       {
         header: '',
         cell: (row) =>
-          row.balanceAgorot > 0
+          !row.amountConfirmed || row.balanceAgorot > 0
             ? `<button class="btn small primary" data-pay="${row.commitmentId}">תשלום</button>`
             : '',
       },
@@ -170,11 +207,21 @@ export async function renderSeats(route) {
     'אין עדיין התחייבויות למקום/ריהוט',
   );
 
+  const missingNote =
+    summary.unknownAmountCount > 0
+      ? `<p class="small full" style="padding:0 4px">
+           אצל <strong>${number(summary.unknownAmountCount)}</strong> חברים הסכום הכולל שסוכם עדיין
+           לא הוזן, ולכן היתרה שלהם אינה ידועה. מה שכן ידוע - התשלום החודשי, כמה שולם עד היום
+           ומתי התחיל - מוצג כרגיל, וההוראות ממשיכות לחייב.
+           <a href="#/seats?state=unknown">הצגת מי שחסר לו סכום</a>
+         </p>`
+      : '';
+
   return `
     ${section('סיכום מקומות וריהוט', cards)}
     ${section('לפי אופן תשלום', modeRows, { hint: `${number(summary.notStartedCount)} טרם שילמו דבר` })}
     ${section('סינון', filters)}
-    ${section('התחייבויות מקום וריהוט', rows, {
+    ${section('התחייבויות מקום וריהוט', rows + missingNote, {
       hint: `${number(data.items.length)} רשומות`,
       flush: true,
     })}
@@ -197,6 +244,49 @@ export function bindSeats(root, reload) {
       openPaymentModal({ commitmentId: Number(button.dataset.pay), onDone: reload }),
     );
   });
+
+  root.querySelectorAll('[data-amount]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = button.closest('tr');
+      const name = row?.querySelector('a')?.textContent?.trim() ?? '';
+      openAmountModal({ commitmentId: Number(button.dataset.amount), memberName: name, onDone: reload });
+    });
+  });
+}
+
+/**
+ * הזנת הסכום הכולל שסוכם עם חבר, כשהוא נודע.
+ *
+ * מרגע ההזנה יש להתחייבות יתרה אמיתית, וההוראה תפסיק לחייב כשתסולק.
+ */
+export function openAmountModal({ commitmentId, memberName, onDone }) {
+  openModal({
+    title: `סכום ההתחייבות${memberName ? ` · ${memberName}` : ''}`,
+    bodyHtml: `
+      <div class="form-grid">
+        ${field(
+          'הסכום הכולל שסוכם (₪)',
+          `<input type="number" name="amountShekels" min="0.01" step="0.01" required placeholder="20000" />`,
+        )}
+        ${field('מספר תשלומים (אם ידוע)', `<input type="number" name="instalmentsCount" min="1" step="1" />`)}
+      </div>
+      <p class="small muted full">
+        מרגע ההזנה תוצג היתרה שנותרה, וההוראה החודשית תסתיים מאליה כשההתחייבות תסולק.
+        הסכום חייב להיות לפחות כגובה מה שכבר שולם.
+      </p>`,
+    submitLabel: 'שמירת הסכום',
+    onSubmit: async (formData) => {
+      const result = await api.setSeatAmount(commitmentId, {
+        amountShekels: formData.get('amountShekels'),
+        instalmentsCount: formData.get('instalmentsCount') ? Number(formData.get('instalmentsCount')) : null,
+      });
+      toast(
+        `הסכום נשמר: ${money(result.item.amountAgorot)} · יתרה ${money(result.item.balanceAgorot)}`,
+        'success',
+      );
+      onDone?.();
+    },
+  });
 }
 
 /**
@@ -213,8 +303,8 @@ export function openSeatModal({ memberId, onDone }) {
       ${field('חבר', `<select name="memberId" required>${selectOptions(memberOptions(), memberId, { placeholder: 'בחרו חבר' })}</select>`)}
       ${field('עמותה', `<select name="organizationId" required>${selectOptions(organizationOptions(), orgId)}</select>`)}
       ${field(
-        'סכום ההתחייבות (₪)',
-        `<input type="number" name="amountShekels" min="0.01" step="0.01" required placeholder="20000" />`,
+        'הסכום הכולל שסוכם (₪)',
+        `<input type="number" name="amountShekels" min="0.01" step="0.01" placeholder="השאירו ריק אם עדיין לא ידוע" />`,
       )}
       ${field('תאריך ההתחייבות', `<input type="date" name="commitmentDate" value="${todayIso()}" required />`)}
       ${field(
@@ -236,6 +326,8 @@ export function openSeatModal({ memberId, onDone }) {
       <p class="small muted full">
         אפשר למלא מספר תשלומים או סכום חודשי - המערכת משלימה את השני.
         כל חיוב מקטין את היתרה, וההוראה מסתיימת מאליה כשההתחייבות שולמה.
+        אם הסכום הכולל עדיין לא ידוע, מלאו רק את הסכום החודשי - היתרה תוצג
+        כ"לא ידועה" עד שתזינו אותו.
       </p>
     </div>
 
@@ -263,19 +355,27 @@ export function openSeatModal({ memberId, onDone }) {
     submitLabel: 'יצירת ההתחייבות',
     onSubmit: async (formData) => {
       const mode = formData.get('paymentMode');
+      const total = formData.get('amountShekels');
       const payload = {
         memberId: Number(formData.get('memberId')),
         organizationId: Number(formData.get('organizationId')),
-        amountShekels: formData.get('amountShekels'),
+        amountShekels: total || null,
         commitmentDate: formData.get('commitmentDate'),
         paymentMode: mode,
         notes: formData.get('notes') || null,
       };
 
+      if (mode !== 'standing_order' && !total) {
+        throw new Error('יש למלא את הסכום');
+      }
+
       if (mode === 'standing_order') {
         const count = formData.get('instalmentsCount');
         const instalment = formData.get('instalmentShekels');
-        if (!count && !instalment) {
+        if (!total && !instalment) {
+          throw new Error('בלי סכום כולל יש למלא את סכום התשלום החודשי');
+        }
+        if (total && !count && !instalment) {
           throw new Error('יש למלא מספר תשלומים או סכום חודשי');
         }
         if (count) payload.instalmentsCount = Number(count);
@@ -290,7 +390,9 @@ export function openSeatModal({ memberId, onDone }) {
       const result = await api.createSeatCommitment(payload);
       const seat = result.commitment;
       toast(
-        `נרשמה התחייבות על ${money(seat.amountAgorot)} עבור ${seat.member.name} · יתרה ${money(seat.balanceAgorot)}`,
+        seat.amountConfirmed
+          ? `נרשמה התחייבות על ${money(seat.amountAgorot)} עבור ${seat.member.name} · יתרה ${money(seat.balanceAgorot)}`
+          : `נרשמה התחייבות עבור ${seat.member.name} · הסכום הכולל יוזן בהמשך`,
         'success',
       );
       onDone?.();

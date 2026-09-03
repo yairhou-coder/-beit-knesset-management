@@ -178,4 +178,74 @@ describe('שדרוג בסיס נתונים קיים', () => {
     expect(after.plannedNote).toBe('ירד השנה');
     second.close();
   });
+
+  it('סכומי מקום/ריהוט שהומצאו בייבוא מנוקים, והתשלומים נשמרים', () => {
+    const file = makeLegacyDatabase();
+
+    // מצב הביניים שנוצר אצל המשתמש: הוא כבר הריץ את הגרסה הקודמת, ולכן
+    // הסכמה עודכנה. הייבוא של אותה גרסה גזר סכום כולל מהכפלת התשלום
+    // החודשי ב-20 ורשם אותו כאילו סוכם כך, וההוראה סומנה כהושלמה ברגע
+    // שהמצטבר הגיע לסכום המומצא.
+    openDatabase(file).close();
+
+    const previous = new Database(file);
+    previous.exec(`
+      INSERT INTO commitments
+        (id, member_id, organization_id, commitment_type_id, commitment_date,
+         amount_agorot, paid_agorot, status, notes)
+      VALUES (1, 1, 1, 1, '2024-01-15', 800000, 800000, 'paid',
+              'מקום/ריהוט · 2 מקומות · 20 תשלומים של 400 ₪');
+      UPDATE standing_orders SET commitment_id = 1, status = 'completed';
+    `);
+    previous.close();
+
+    const db = openDatabase(file);
+    const row = db.prepare('SELECT * FROM commitments WHERE id = 1').get() as {
+      amount_confirmed: number;
+      amount_agorot: number;
+      paid_agorot: number;
+      status: string;
+      instalments_count: number | null;
+      notes: string;
+    };
+
+    // הסכום המומצא ירד, והסכום מסומן כלא ידוע
+    expect(row.amount_confirmed).toBe(0);
+    expect(row.amount_agorot).toBe(800000); // המצטבר ששולם בפועל
+    expect(row.paid_agorot).toBe(800000); // התשלומים לא נגעו
+    expect(row.status).toBe('open');
+    expect(row.instalments_count).toBeNull();
+    expect(row.notes).toContain('תשלום חודשי');
+    expect(row.notes).not.toContain('20 תשלומים');
+
+    // ההוראה שסומנה כהושלמה רק בגלל הסכום המומצא חוזרת לפעילות
+    const order = db.prepare('SELECT status FROM standing_orders WHERE commitment_id = 1').get() as {
+      status: string;
+    };
+    expect(order.status).toBe('active');
+
+    db.close();
+  });
+
+  it('התחייבות שהגבאי הזין בעצמו אינה מנוקה', () => {
+    const file = makeLegacyDatabase();
+    const legacy = new Database(file);
+    legacy.exec(`
+      INSERT INTO commitments
+        (id, member_id, organization_id, commitment_type_id, commitment_date,
+         amount_agorot, paid_agorot, status, notes)
+      VALUES (2, 1, 1, 1, '2024-05-01', 2000000, 500000, 'partially_paid',
+              'סוכם איתו 20,000 ב-40 תשלומים');
+    `);
+    legacy.close();
+
+    const db = openDatabase(file);
+    const row = db.prepare('SELECT * FROM commitments WHERE id = 2').get() as {
+      amount_confirmed: number;
+      amount_agorot: number;
+    };
+    expect(row.amount_confirmed).toBe(1);
+    expect(row.amount_agorot).toBe(2000000);
+    db.close();
+  });
 });

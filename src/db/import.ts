@@ -44,15 +44,6 @@ interface ImportedMember {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * מספר התשלומים שבהם נפרסת התחייבות המקום/ריהוט.
- *
- * קובץ האקסל כולל את סכום התשלום החודשי בלבד ולא את הסכום הכולל, ולכן
- * הסכום הכולל נגזר כאן. ניתן לשנות את הערך, או לתקן כל התחייבות בנפרד
- * במסך ההתחייבויות.
- */
-const SEAT_INSTALMENTS = 20;
-
 function loadMembers(): ImportedMember[] {
   const file = path.join(here, 'import-data', 'members.json');
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { members: ImportedMember[] };
@@ -160,23 +151,24 @@ export async function importFromExcel(
     orders.push(dues.id);
 
     // מקום/ריהוט הוא התחייבות עם סכום כולל, ולא חיוב חודשי ללא סוף.
-    // ההוראה החודשית משלמת אותה בתשלומים, וכל חיוב מקטין את היתרה.
-    const seatTotal = shekelsToAgorot(source.seatDuesShekels * SEAT_INSTALMENTS);
+    //
+    // אלא שקובץ האקסל כולל רק את התשלום החודשי, והסכום הכולל שונה
+    // מחבר לחבר - יש מי שהתחייב ל-10 תשלומים ויש מי שהתחייב ל-40.
+    // לכן ההתחייבות נוצרת **בלי סכום כולל**: מה שידוע נרשם, ומה שלא
+    // ידוע מסומן ככזה ומוזן במסך כשהוא נודע.
     const seatCommitment = createCommitment(db, {
       memberId: member.id,
       organizationId: synagogue.id,
       commitmentTypeId: typeId('seat'),
-      amountAgorot: seatTotal,
+      amountAgorot: 1, // ערך זמני; מסומן מיד כלא-מאושר ומתעדכן לפי התשלומים
       commitmentDate: startDate,
       plannedPaymentMethod: 'standing_order',
-      notes: `מקום/ריהוט · ${source.seats} מקומות · ${SEAT_INSTALMENTS} תשלומים של ${source.seatDuesShekels} ₪`,
+      notes: `מקום/ריהוט · ${source.seats} מקומות · תשלום חודשי ${source.seatDuesShekels} ₪`,
     });
 
-    // פריסת התשלומים נשמרת על ההתחייבות עצמה, כדי שמסך המקומות יציג
-    // כמה תשלומים סוכמו ומתי התחיל התשלום הראשון.
     db.prepare(
-      'UPDATE commitments SET instalments_count = ?, first_payment_date = ? WHERE id = ?',
-    ).run(SEAT_INSTALMENTS, startDate, seatCommitment.id);
+      `UPDATE commitments SET amount_confirmed = 0, first_payment_date = ? WHERE id = ?`,
+    ).run(startDate, seatCommitment.id);
 
     const seat = createStandingOrder(db, {
       memberId: member.id,

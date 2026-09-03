@@ -89,6 +89,7 @@ export const api = {
   seats: (params) => request('GET', `/seats${qs(params)}`),
   createSeatCommitment: (body) => request('POST', '/seats', body),
   updateSeatPlan: (id, body) => request('PATCH', `/seats/${id}`, body),
+  setSeatAmount: (id, body) => request('POST', `/seats/${id}/amount`, body),
 
   notifications: (params) => request('GET', `/notifications${qs(params)}`),
   sendDebtReminder: (body) => request('POST', '/notifications/debt-reminder', body),

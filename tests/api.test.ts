@@ -168,8 +168,37 @@ describe('API', () => {
     expect(all.body.items).toHaveLength(1);
   });
 
+  it('מקומות וריהוט: יצירה בלי סכום כולל, והזנתו בהמשך', async () => {
+    const created = await call('POST', '/api/seats', {
+      memberId,
+      organizationId: orgId,
+      amountShekels: null,
+      paymentMode: 'standing_order',
+      instalmentShekels: 400,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.commitment.amountConfirmed).toBe(false);
+    expect(created.body.commitment.amountAgorot).toBeNull();
+    expect(created.body.commitment.balanceAgorot).toBeNull();
+    expect(created.body.commitment.instalmentAgorot).toBe(40_000);
+
+    const id = created.body.commitment.commitmentId;
+    const unknown = await call('GET', '/api/seats?state=unknown');
+    expect(unknown.body.items).toHaveLength(1);
+    expect(unknown.body.summary.unknownAmountCount).toBe(1);
+
+    const confirmed = await call('POST', `/api/seats/${id}/amount`, { amountShekels: 12000 });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.item.amountConfirmed).toBe(true);
+    expect(confirmed.body.item.balanceAgorot).toBe(1_200_000);
+
+    // סכום נמוך ממה ששולם נדחה בהודעה ברורה
+    const rejected = await call('POST', `/api/seats/${id}/amount`, { amountShekels: 0 });
+    expect(rejected.status).toBeGreaterThanOrEqual(400);
+  });
+
   it('מקומות וריהוט: עדכון פריסה', async () => {
-    const seats = await call('GET', '/api/seats');
+    const seats = await call('GET', '/api/seats?state=outstanding');
     const id = seats.body.items[0].commitmentId;
     const updated = await call('PATCH', `/api/seats/${id}`, { instalmentsCount: 25 });
     expect(updated.status).toBe(200);

@@ -116,6 +116,16 @@ CREATE TABLE IF NOT EXISTS commitments (
   instalments_count     INTEGER CHECK (instalments_count IS NULL OR instalments_count > 0),
   first_payment_date    TEXT,
 
+  -- האם הסכום הכולל ידוע ואושר.
+  --
+  -- יש התחייבויות שבהן גובים סכום חודשי אבל הסכום הכולל שסוכם עם החבר
+  -- אינו רשום בשום מקום. במקרה כזה amount_confirmed = 0: הסכום הכולל
+  -- והיתרה מוצגים כלא ידועים, amount_agorot משמש רק כמצטבר ששולם,
+  -- וההוראה ממשיכה לחייב עד שיוזן הסכום האמיתי.
+  --
+  -- העיקרון: מוטב להציג "לא ידוע" מאשר מספר שנראה אמיתי ואינו.
+  amount_confirmed      INTEGER NOT NULL DEFAULT 1 CHECK (amount_confirmed IN (0,1)),
+
   notes                 TEXT,
   cancelled_at          TEXT,
   cancel_reason         TEXT,

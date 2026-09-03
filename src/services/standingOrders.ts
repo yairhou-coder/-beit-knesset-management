@@ -296,20 +296,26 @@ export async function chargeStandingOrder(
   if (!member) throw new NotFoundError(`חבר ${order.member_id}`);
 
   // הוראה שמשלמת התחייבות מחייבת רק עד גובה היתרה שנותרה, ולא מעבר לה.
+  //
+  // כשהסכום הכולל אינו ידוע אין יתרה לחסום מולה, וההוראה ממשיכה לחייב
+  // את הסכום החודשי המלא - בדיוק כפי שהיא מחייבת במציאות.
   let amountAgorot = order.amount_agorot;
   if (order.commitment_id) {
     const commitment = getCommitmentRow(db, order.commitment_id);
     if (commitment.status === 'cancelled') {
       throw new ValidationError('ההתחייבות המשויכת בוטלה');
     }
-    if (commitment.balance_agorot <= 0) {
+    if (commitment.amount_confirmed === 0) {
+      // ממשיכים עם הסכום החודשי המלא
+    } else if (commitment.balance_agorot <= 0) {
       // ההתחייבות שולמה במלואה - אין עוד מה לחייב
       db.prepare(
         `UPDATE standing_orders SET status = 'completed', updated_at = datetime('now') WHERE id = ?`,
       ).run(id);
       throw new ValidationError('ההתחייבות שולמה במלואה, ההוראה הסתיימה');
+    } else {
+      amountAgorot = Math.min(amountAgorot, commitment.balance_agorot);
     }
-    amountAgorot = Math.min(amountAgorot, commitment.balance_agorot);
   }
 
   const idempotencyKey = `standing-order-${id}-${period}`;
@@ -355,9 +361,10 @@ export async function chargeStandingOrder(
   });
 
   if (succeeded) {
-    // אם ההתחייבות סולקה בחיוב הזה, ההוראה מסתיימת מאליה
-    const settled =
-      order.commitment_id !== null && getCommitmentRow(db, order.commitment_id).balance_agorot <= 0;
+    // אם ההתחייבות סולקה בחיוב הזה, ההוראה מסתיימת מאליה.
+    // התחייבות שסכומה אינו ידוע לעולם אינה "מסולקת" - אין מול מה למדוד.
+    const linked = order.commitment_id !== null ? getCommitmentRow(db, order.commitment_id) : null;
+    const settled = linked !== null && linked.amount_confirmed === 1 && linked.balance_agorot <= 0;
     db.prepare(
       `UPDATE standing_orders SET last_charge_at = ?, last_failure_reason = NULL,
          status = ?, updated_at = datetime('now') WHERE id = ?`,

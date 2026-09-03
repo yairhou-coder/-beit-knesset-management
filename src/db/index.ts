@@ -45,6 +45,9 @@ function migrate(db: Db): void {
   // פריסת תשלומים על התחייבות (מקום/ריהוט)
   addColumn('commitments', 'instalments_count', 'INTEGER');
   addColumn('commitments', 'first_payment_date', 'TEXT');
+  addColumn('commitments', 'amount_confirmed', 'INTEGER NOT NULL DEFAULT 1');
+
+  clearImportedSeatTotals(db);
 
   // תקציב מתוכנן לקטגוריית הוצאה
   addColumn('expense_categories', 'planned_amount_agorot', 'INTEGER');
@@ -75,6 +78,55 @@ function migrate(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category_id);
     CREATE INDEX IF NOT EXISTS idx_expenses_event    ON expenses(event_id);
   `);
+}
+
+/**
+ * מסיר סכומי התחייבות שנוצרו בייבוא ולא הגיעו מנתוני הקהילה.
+ *
+ * הייבוא הראשון גזר את הסכום הכולל של מקום/ריהוט מהכפלת התשלום החודשי
+ * במספר תשלומים קבוע. קובץ האקסל אינו כולל את הסכום הכולל, ובפועל הוא
+ * שונה מחבר לחבר, ולכן המספר שנוצר כך אינו אמיתי - והוא הוצג במסך
+ * כאילו הוא כן.
+ *
+ * הפונקציה מזהה בדיוק את השורות שהייבוא יצר (לפי ההערה שהוא כתב),
+ * מסמנת אותן כ"סכום לא ידוע" ומאפסת את הסכום הכולל לסך ששולם בפועל.
+ * התשלומים, ההכנסות והקבלות אינם נוגעים - רק המספר שהומצא יורד.
+ */
+function clearImportedSeatTotals(db: Db): void {
+  const marker = '%מקום/ריהוט ·%תשלומים של%';
+  const affected = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM commitments c
+         JOIN commitment_types t ON t.id = c.commitment_type_id
+        WHERE t.key = 'seat' AND c.amount_confirmed = 1 AND c.notes LIKE ?`,
+    )
+    .get(marker) as { c: number };
+  if (affected.c === 0) return;
+
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE commitments
+          SET amount_confirmed = 0,
+              amount_agorot    = MAX(paid_agorot, 1),
+              instalments_count = NULL,
+              status           = CASE WHEN status = 'cancelled' THEN 'cancelled' ELSE 'open' END,
+              notes            = REPLACE(notes, ' · 20 תשלומים של', ' · תשלום חודשי'),
+              updated_at       = datetime('now')
+        WHERE id IN (
+          SELECT c.id FROM commitments c
+            JOIN commitment_types t ON t.id = c.commitment_type_id
+           WHERE t.key = 'seat' AND c.amount_confirmed = 1 AND c.notes LIKE ?
+        )`,
+    ).run(marker);
+
+    // הוראות שסומנו כהושלמו רק בגלל אותו סכום מומצא חוזרות לפעילות
+    db.prepare(
+      `UPDATE standing_orders SET status = 'active', updated_at = datetime('now')
+        WHERE status = 'completed' AND commitment_id IN (
+          SELECT id FROM commitments WHERE amount_confirmed = 0
+        )`,
+    ).run();
+  })();
 }
 
 /**

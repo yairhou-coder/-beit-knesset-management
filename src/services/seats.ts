@@ -40,10 +40,17 @@ export interface SeatCommitmentView {
   member: { id: number; name: string; phone: string | null };
   organization: { id: number; name: string };
 
-  /** הסכום שהחבר התחייב לו. */
-  amountAgorot: number;
+  /**
+   * הסכום שהחבר התחייב לו, ו-null כשהוא אינו ידוע.
+   *
+   * אצל חלק מהחברים גובים סכום חודשי אבל הסכום הכולל אינו רשום בשום
+   * מקום. במקרה כזה גם היתרה, מספר התשלומים והמועד הצפוי אינם ידועים,
+   * וכולם מוחזרים כ-null - ולא כמספר משוער שנראה אמיתי.
+   */
+  amountAgorot: number | null;
+  amountConfirmed: boolean;
   paidAgorot: number;
-  balanceAgorot: number;
+  balanceAgorot: number | null;
 
   /** מתי נגבה (או ייגבה) התשלום הראשון. */
   firstPaymentDate: string | null;
@@ -91,6 +98,7 @@ interface SeatJoinedRow {
   amount_agorot: number;
   paid_agorot: number;
   balance_agorot: number;
+  amount_confirmed: number;
   status: CommitmentStatus;
   commitment_date: string;
   instalments_count: number | null;
@@ -127,6 +135,7 @@ const JOINED_SELECT = `
          c.amount_agorot     AS amount_agorot,
          c.paid_agorot       AS paid_agorot,
          c.balance_agorot    AS balance_agorot,
+         c.amount_confirmed  AS amount_confirmed,
          c.status            AS status,
          c.commitment_date   AS commitment_date,
          c.instalments_count AS instalments_count,
@@ -163,33 +172,45 @@ function nextOccurrence(dayOfMonth: number, reference: string = today()): string
 }
 
 function toView(row: SeatJoinedRow): SeatCommitmentView {
+  const confirmed = row.amount_confirmed === 1;
+  const amountAgorot = confirmed ? row.amount_agorot : null;
+  const balanceAgorot = confirmed ? row.balance_agorot : null;
+
+  // התשלום החודשי ידוע גם בלי הסכום הכולל - הוא מגיע מהוראת הקבע.
   const instalmentAgorot =
     row.order_amount ??
-    (row.instalments_count ? Math.round(row.amount_agorot / row.instalments_count) : null);
-
-  const instalmentsCount =
-    row.instalments_count ??
-    (instalmentAgorot && instalmentAgorot > 0
-      ? Math.ceil(row.amount_agorot / instalmentAgorot)
+    (confirmed && row.instalments_count
+      ? Math.round(row.amount_agorot / row.instalments_count)
       : null);
 
-  // כמה נותר: לפי היתרה בפועל, ולא לפי כמה תשלומים כבר בוצעו - כך
-  // תשלום חלקי או תשלום נוסף במזומן משתקפים נכון.
-  const instalmentsRemaining =
-    row.balance_agorot <= 0
+  // מספר התשלומים והמועד הצפוי נגזרים מהסכום הכולל, ולכן בלעדיו
+  // הם אינם ידועים. עדיף לומר "לא ידוע" מאשר לנחש.
+  const instalmentsCount = !confirmed
+    ? null
+    : (row.instalments_count ??
+      (instalmentAgorot && instalmentAgorot > 0
+        ? Math.ceil(row.amount_agorot / instalmentAgorot)
+        : null));
+
+  const instalmentsRemaining = !confirmed
+    ? null
+    : balanceAgorot !== null && balanceAgorot <= 0
       ? 0
-      : instalmentAgorot && instalmentAgorot > 0
-        ? Math.ceil(row.balance_agorot / instalmentAgorot)
+      : instalmentAgorot && instalmentAgorot > 0 && balanceAgorot !== null
+        ? Math.ceil(balanceAgorot / instalmentAgorot)
         : null;
 
   const paymentMode: SeatPaymentMode = row.order_id
     ? 'standing_order'
-    : row.balance_agorot <= 0
+    : confirmed && row.balance_agorot <= 0
       ? 'paid_upfront'
       : 'manual';
 
   const nextChargeDate =
-    row.order_id && row.order_status === 'active' && row.balance_agorot > 0 && row.order_day
+    row.order_id &&
+    row.order_status === 'active' &&
+    (!confirmed || row.balance_agorot > 0) &&
+    row.order_day
       ? nextOccurrence(row.order_day)
       : null;
 
@@ -201,9 +222,10 @@ function toView(row: SeatJoinedRow): SeatCommitmentView {
       phone: row.member_phone,
     },
     organization: { id: row.organization_id, name: row.organization_name },
-    amountAgorot: row.amount_agorot,
+    amountAgorot,
+    amountConfirmed: confirmed,
     paidAgorot: row.paid_agorot,
-    balanceAgorot: row.balance_agorot,
+    balanceAgorot,
     firstPaymentDate: row.first_payment_date ?? row.first_payment_at ?? row.order_start,
     lastPaymentDate: row.last_payment_at,
     dayOfMonth: row.order_day,
@@ -235,8 +257,11 @@ export interface SeatFilters {
   memberId?: number;
   memberSearch?: string;
   organizationId?: number;
-  /** outstanding = רק מי שנותרה לו יתרה; paid = מי שסיים לשלם. */
-  state?: 'outstanding' | 'paid' | 'all';
+  /**
+   * outstanding = נותרה יתרה · paid = סיים לשלם ·
+   * unknown = הסכום הכולל טרם הוזן, ולכן לא ידוע אם נשארה יתרה.
+   */
+  state?: 'outstanding' | 'paid' | 'unknown' | 'all';
   paymentMode?: SeatPaymentMode;
 }
 
@@ -250,9 +275,11 @@ export function listSeatCommitments(db: Db, filters: SeatFilters = {}): SeatComm
     where.add("(m.first_name || ' ' || m.last_name LIKE ? OR m.phone LIKE ?)", term, term);
   }
   if (filters.state === 'outstanding') {
-    where.add("c.balance_agorot > 0 AND c.status != 'cancelled'");
+    where.add("c.amount_confirmed = 1 AND c.balance_agorot > 0 AND c.status != 'cancelled'");
   } else if (filters.state === 'paid') {
-    where.add('c.balance_agorot <= 0');
+    where.add('c.amount_confirmed = 1 AND c.balance_agorot <= 0');
+  } else if (filters.state === 'unknown') {
+    where.add('c.amount_confirmed = 0');
   }
 
   const rows = db
@@ -267,20 +294,39 @@ export function listSeatCommitments(db: Db, filters: SeatFilters = {}): SeatComm
 
 export interface SeatSummary {
   count: number;
+  /**
+   * הסכומים נספרים רק על התחייבויות שסכומן ידוע. מי שסכומו טרם הוזן
+   * נספר ב-unknownAmountCount בלבד, כדי שסך ההתחייבויות לא יתנפח
+   * ממספרים משוערים.
+   */
   committedAgorot: number;
   paidAgorot: number;
   balanceAgorot: number;
+  /** כמה התחייבויות עדיין ללא סכום כולל ידוע. */
+  unknownAmountCount: number;
+  /** כמה שולם עד היום על אותן התחייבויות - זה כן ידוע. */
+  unknownAmountPaidAgorot: number;
   /** כמה סיימו לשלם, כמה באמצע, וכמה טרם התחילו. */
   settledCount: number;
   inProgressCount: number;
   notStartedCount: number;
   /** כמה אמור להיגבות כל חודש מהוראות הקבע הפעילות של המקומות. */
   monthlyExpectedAgorot: number;
-  byMode: Array<{ mode: SeatPaymentMode; label: string; count: number; balanceAgorot: number }>;
+  byMode: Array<{
+    mode: SeatPaymentMode;
+    label: string;
+    count: number;
+    /** היתרה של מי שסכומו ידוע בלבד. */
+    balanceAgorot: number;
+    /** כמה מתוך הקבוצה עדיין ללא סכום כולל. */
+    unknownAmountCount: number;
+  }>;
 }
 
 export function getSeatSummary(db: Db, filters: SeatFilters = {}): SeatSummary {
   const items = listSeatCommitments(db, { ...filters, state: 'all' });
+  const known = items.filter((item) => item.amountConfirmed);
+  const unknown = items.filter((item) => !item.amountConfirmed);
 
   const byMode = (['standing_order', 'paid_upfront', 'manual'] as const).map((mode) => {
     const group = items.filter((item) => item.paymentMode === mode);
@@ -288,20 +334,29 @@ export function getSeatSummary(db: Db, filters: SeatFilters = {}): SeatSummary {
       mode,
       label: SEAT_PAYMENT_MODE_LABELS[mode],
       count: group.length,
-      balanceAgorot: group.reduce((sum, item) => sum + item.balanceAgorot, 0),
+      balanceAgorot: group.reduce((sum, item) => sum + (item.balanceAgorot ?? 0), 0),
+      unknownAmountCount: group.filter((item) => !item.amountConfirmed).length,
     };
   });
 
   return {
     count: items.length,
-    committedAgorot: items.reduce((sum, item) => sum + item.amountAgorot, 0),
+    committedAgorot: known.reduce((sum, item) => sum + (item.amountAgorot ?? 0), 0),
     paidAgorot: items.reduce((sum, item) => sum + item.paidAgorot, 0),
-    balanceAgorot: items.reduce((sum, item) => sum + item.balanceAgorot, 0),
-    settledCount: items.filter((item) => item.balanceAgorot <= 0).length,
-    inProgressCount: items.filter((item) => item.balanceAgorot > 0 && item.paidAgorot > 0).length,
+    balanceAgorot: known.reduce((sum, item) => sum + (item.balanceAgorot ?? 0), 0),
+    unknownAmountCount: unknown.length,
+    unknownAmountPaidAgorot: unknown.reduce((sum, item) => sum + item.paidAgorot, 0),
+    settledCount: known.filter((item) => (item.balanceAgorot ?? 0) <= 0).length,
+    inProgressCount: items.filter(
+      (item) => item.paidAgorot > 0 && (!item.amountConfirmed || (item.balanceAgorot ?? 0) > 0),
+    ).length,
     notStartedCount: items.filter((item) => item.paidAgorot === 0).length,
     monthlyExpectedAgorot: items
-      .filter((item) => item.standingOrder?.status === 'active' && item.balanceAgorot > 0)
+      .filter(
+        (item) =>
+          item.standingOrder?.status === 'active' &&
+          (!item.amountConfirmed || (item.balanceAgorot ?? 0) > 0),
+      )
       .reduce((sum, item) => sum + (item.standingOrder?.amountAgorot ?? 0), 0),
     byMode,
   };
@@ -314,8 +369,11 @@ export function getSeatSummary(db: Db, filters: SeatFilters = {}): SeatSummary {
 export interface SeatCommitmentInput {
   memberId: number;
   organizationId: number;
-  /** הסכום הכולל שהחבר התחייב לו. */
-  amountAgorot: number;
+  /**
+   * הסכום הכולל שהחבר התחייב לו. null כאשר הוא אינו ידוע - אז נרשמים
+   * רק התשלום החודשי והמועדים, והסכום יוזן מאוחר יותר.
+   */
+  amountAgorot: number | null;
   commitmentDate?: string;
   notes?: string | null;
 
@@ -348,7 +406,14 @@ export async function createSeatCommitment(
   db: Db,
   input: SeatCommitmentInput,
 ): Promise<SeatCommitmentResult> {
-  assertPositiveAgorot(input.amountAgorot, 'סכום ההתחייבות');
+  const amountKnown = input.amountAgorot !== null && input.amountAgorot !== undefined;
+  if (amountKnown) {
+    assertPositiveAgorot(input.amountAgorot, 'סכום ההתחייבות');
+  } else if (input.paymentMode === 'paid_upfront') {
+    throw new ValidationError('לתשלום מראש נדרש הסכום ששולם');
+  } else if (input.paymentMode === 'standing_order' && !input.instalmentAgorot) {
+    throw new ValidationError('כשהסכום הכולל אינו ידוע, יש לציין את סכום התשלום החודשי');
+  }
 
   const typeRow = db
     .prepare('SELECT id FROM commitment_types WHERE key = ?')
@@ -366,15 +431,17 @@ export async function createSeatCommitment(
       throw new ValidationError('לפריסה לתשלומים נדרש מספר התשלומים או הסכום החודשי');
     }
     if (!instalmentAgorot) {
-      instalmentAgorot = Math.round(input.amountAgorot / instalmentsCount!);
+      instalmentAgorot = Math.round(input.amountAgorot! / instalmentsCount!);
     }
     if (instalmentAgorot <= 0) {
       throw new ValidationError('הסכום החודשי חייב להיות גדול מאפס');
     }
-    if (!instalmentsCount) {
-      instalmentsCount = Math.ceil(input.amountAgorot / instalmentAgorot);
+    if (!instalmentsCount && amountKnown) {
+      instalmentsCount = Math.ceil(input.amountAgorot! / instalmentAgorot);
     }
   }
+  // בלי סכום כולל אין מספר תשלומים - הוא ייגזר כשהסכום יוזן.
+  if (!amountKnown) instalmentsCount = null;
 
   const firstPaymentDate =
     input.firstPaymentDate ??
@@ -384,7 +451,9 @@ export async function createSeatCommitment(
     memberId: input.memberId,
     organizationId: input.organizationId,
     commitmentTypeId: typeRow.id,
-    amountAgorot: input.amountAgorot,
+    // בלי סכום ידוע נרשם ערך זמני של אגורה אחת; הוא מסומן כלא-מאושר,
+    // מוצג כ"לא ידוע", ומתעדכן לסך ששולם עם כל תשלום.
+    amountAgorot: amountKnown ? input.amountAgorot! : 1,
     commitmentDate,
     plannedPaymentMethod:
       input.paymentMode === 'standing_order' ? 'standing_order' : (input.paidMethod ?? null),
@@ -393,8 +462,8 @@ export async function createSeatCommitment(
 
   db.prepare(
     `UPDATE commitments SET instalments_count = ?, first_payment_date = ?,
-       updated_at = datetime('now') WHERE id = ?`,
-  ).run(instalmentsCount, firstPaymentDate, commitment.id);
+       amount_confirmed = ?, updated_at = datetime('now') WHERE id = ?`,
+  ).run(instalmentsCount, firstPaymentDate, amountKnown ? 1 : 0, commitment.id);
 
   let standingOrderId: number | null = null;
   let paymentId: number | null = null;
@@ -415,7 +484,7 @@ export async function createSeatCommitment(
   } else if (input.paymentMode === 'paid_upfront') {
     const result = await recordPayment(db, {
       commitmentId: commitment.id,
-      amountAgorot: input.amountAgorot,
+      amountAgorot: input.amountAgorot!,
       paymentDate: input.paidDate ?? commitmentDate,
       method: input.paidMethod ?? 'cash',
       description: 'מקום/ריהוט - שולם מראש',
@@ -428,6 +497,53 @@ export async function createSeatCommitment(
   );
   if (!view) throw new ValidationError('ההתחייבות נוצרה אך לא נמצאה במסך המקומות');
   return { commitment: view, standingOrderId, paymentId };
+}
+
+/**
+ * הזנת הסכום הכולל שסוכם עם החבר, כשהוא נודע.
+ *
+ * מרגע זה יש להתחייבות יתרה אמיתית: ההוראה תפסיק לחייב כשההתחייבות
+ * תסולק, וכל המסכים יציגו כמה נותר. הסכום חייב להיות לפחות כמה שכבר
+ * שולם - אחרת היינו רושמים חוב שלילי.
+ */
+export function confirmSeatAmount(
+  db: Db,
+  commitmentId: number,
+  amountAgorot: number,
+  options: { instalmentsCount?: number | null } = {},
+): SeatCommitmentView {
+  assertPositiveAgorot(amountAgorot, 'סכום ההתחייבות');
+
+  const row = db
+    .prepare('SELECT paid_agorot, member_id FROM commitments WHERE id = ?')
+    .get(commitmentId) as { paid_agorot: number; member_id: number } | undefined;
+  if (!row) throw new ValidationError(`התחייבות ${commitmentId} לא נמצאה`);
+
+  if (amountAgorot < row.paid_agorot) {
+    throw new ValidationError(
+      `הסכום שהוזן (${amountAgorot / 100} ₪) נמוך מהסכום שכבר שולם (${row.paid_agorot / 100} ₪)`,
+    );
+  }
+
+  const status = amountAgorot === row.paid_agorot ? 'paid' : row.paid_agorot > 0 ? 'partially_paid' : 'open';
+  db.prepare(
+    `UPDATE commitments SET amount_agorot = ?, amount_confirmed = 1, instalments_count = ?,
+       status = ?, updated_at = datetime('now') WHERE id = ?`,
+  ).run(amountAgorot, options.instalmentsCount ?? null, status, commitmentId);
+
+  // הוראה שההתחייבות שלה סולקה בדיוק עכשיו מסתיימת
+  if (amountAgorot === row.paid_agorot) {
+    db.prepare(
+      `UPDATE standing_orders SET status = 'completed', updated_at = datetime('now')
+        WHERE commitment_id = ? AND status = 'active'`,
+    ).run(commitmentId);
+  }
+
+  const [view] = listSeatCommitments(db, { memberId: row.member_id, state: 'all' }).filter(
+    (item) => item.commitmentId === commitmentId,
+  );
+  if (!view) throw new ValidationError('ההתחייבות לא נמצאה לאחר העדכון');
+  return view;
 }
 
 /** עדכון פרטי הפריסה של התחייבות קיימת. */

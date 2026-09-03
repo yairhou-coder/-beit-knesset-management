@@ -30,6 +30,10 @@ export interface CommitmentRow {
   balance_agorot: number;
   status: CommitmentStatus;
   planned_payment_method: PaymentMethod | null;
+  /** 0 = הסכום הכולל אינו ידוע; amount_agorot משמש אז כמצטבר ששולם בלבד. */
+  amount_confirmed: number;
+  instalments_count: number | null;
+  first_payment_date: string | null;
   notes: string | null;
   cancelled_at: string | null;
   cancel_reason: string | null;
@@ -380,6 +384,17 @@ export function recalculateCommitmentTotals(db: Db, commitmentId: number): Commi
        FROM payments WHERE commitment_id = ? AND status = 'completed'`,
     )
     .get(commitmentId) as { paid: number };
+
+  // כשהסכום הכולל אינו ידוע, הוא אינו תקרה: הוא רק עוקב אחרי מה ששולם.
+  // ההתחייבות נשארת פתוחה, כי לעולם לא נדע שהיא סולקה בלי הסכום האמיתי.
+  if (existing.amount_confirmed === 0) {
+    const status = existing.status === 'cancelled' ? 'cancelled' : 'open';
+    db.prepare(
+      `UPDATE commitments SET paid_agorot = ?, amount_agorot = MAX(?, 1), status = ?,
+         updated_at = datetime('now') WHERE id = ?`,
+    ).run(paid, paid, status, commitmentId);
+    return getCommitmentRow(db, commitmentId);
+  }
 
   if (paid > existing.amount_agorot) {
     throw new ConflictError(

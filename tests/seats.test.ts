@@ -9,6 +9,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import type { Db } from '../src/db/index.js';
 import { shekelsToAgorot } from '../src/domain/money.js';
 import {
+  confirmSeatAmount,
   createSeatCommitment,
   getSeatSummary,
   listSeatCommitments,
@@ -259,5 +260,168 @@ describe('מקומות וריהוט', () => {
     expect(updated!.instalmentsCount).toBe(25);
     expect(updated!.instalmentAgorot).toBe(shekelsToAgorot(800));
     expect(updated!.firstPaymentDate).toBe('2025-09-01');
+  });
+
+  // -------------------------------------------------------------------------
+  // סכום כולל שאינו ידוע
+  //
+  // אצל חלק מהחברים גובים סכום חודשי, אבל כמה סוכם בסך הכל לא רשום
+  // בשום מקום. המערכת חייבת לומר "לא ידוע" ולא לנחש מספר.
+  // -------------------------------------------------------------------------
+
+  it('התחייבות ללא סכום כולל: הסכום והיתרה מוחזרים כלא ידועים', async () => {
+    const { commitment } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+      firstPaymentDate: '2026-01-10',
+    });
+
+    expect(commitment.amountConfirmed).toBe(false);
+    expect(commitment.amountAgorot).toBeNull();
+    expect(commitment.balanceAgorot).toBeNull();
+    expect(commitment.instalmentsCount).toBeNull();
+    expect(commitment.instalmentsRemaining).toBeNull();
+    // ומה שכן ידוע - מוצג
+    expect(commitment.instalmentAgorot).toBe(shekelsToAgorot(500));
+    expect(commitment.firstPaymentDate).toBe('2026-01-10');
+    expect(commitment.dayOfMonth).toBe(10);
+  });
+
+  it('בלי סכום כולל ההוראה ממשיכה לחייב ואינה "מסתיימת"', async () => {
+    const { standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+
+    for (const period of ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05']) {
+      await chargeStandingOrder(db, standingOrderId!, period);
+    }
+
+    const [seat] = listSeatCommitments(db, { memberId });
+    expect(seat!.paidAgorot).toBe(shekelsToAgorot(2500));
+    expect(seat!.instalmentsPaid).toBe(5);
+    expect(seat!.balanceAgorot).toBeNull();
+    // ההוראה עדיין פעילה - אין סכום שמולו אפשר לקבוע שהיא הסתיימה
+    expect(seat!.standingOrder?.status).toBe('active');
+    expect(seat!.nextChargeDate).not.toBeNull();
+    // וכל חיוב נרשם במלואו, בלי תקרה מומצאת
+    expect(seat!.standingOrder?.amountAgorot).toBe(shekelsToAgorot(500));
+  });
+
+  it('הזנת הסכום בדיעבד מחשבת יתרה נכונה מהתשלומים שכבר בוצעו', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    await chargeStandingOrder(db, standingOrderId!, '2026-01');
+    await chargeStandingOrder(db, standingOrderId!, '2026-02');
+
+    const updated = confirmSeatAmount(db, commitment.commitmentId, shekelsToAgorot(20000), {
+      instalmentsCount: 40,
+    });
+
+    expect(updated.amountConfirmed).toBe(true);
+    expect(updated.amountAgorot).toBe(shekelsToAgorot(20000));
+    expect(updated.paidAgorot).toBe(shekelsToAgorot(1000));
+    expect(updated.balanceAgorot).toBe(shekelsToAgorot(19000));
+    expect(updated.instalmentsCount).toBe(40);
+    expect(updated.instalmentsRemaining).toBe(38);
+    expect(updated.status).toBe('partially_paid');
+  });
+
+  it('סכום נמוך ממה שכבר שולם נדחה', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    await chargeStandingOrder(db, standingOrderId!, '2026-01');
+    await chargeStandingOrder(db, standingOrderId!, '2026-02');
+
+    expect(() => confirmSeatAmount(db, commitment.commitmentId, shekelsToAgorot(600))).toThrow(
+      /נמוך מהסכום שכבר שולם/,
+    );
+  });
+
+  it('הזנת סכום שכבר שולם במלואו מסיימת את ההוראה', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    await chargeStandingOrder(db, standingOrderId!, '2026-01');
+    await chargeStandingOrder(db, standingOrderId!, '2026-02');
+
+    const updated = confirmSeatAmount(db, commitment.commitmentId, shekelsToAgorot(1000));
+    expect(updated.balanceAgorot).toBe(0);
+    expect(updated.status).toBe('paid');
+    expect(updated.standingOrder?.status).toBe('completed');
+  });
+
+  it('הסיכום אינו מנפח את סך ההתחייבויות בסכומים שאינם ידועים', async () => {
+    const second = makeMember(db, { firstName: 'משה', lastName: 'לוי', email: 'moshe@example.com' }).id;
+
+    await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: shekelsToAgorot(10000),
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    const unknown = await createSeatCommitment(db, {
+      memberId: second,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(400),
+    });
+    await chargeStandingOrder(db, unknown.standingOrderId!, '2026-01');
+
+    const summary = getSeatSummary(db, {});
+    expect(summary.count).toBe(2);
+    // רק ההתחייבות הידועה נספרת בסכומים
+    expect(summary.committedAgorot).toBe(shekelsToAgorot(10000));
+    expect(summary.balanceAgorot).toBe(shekelsToAgorot(10000));
+    // ומה ששולם - נספר תמיד, כי הוא ידוע
+    expect(summary.paidAgorot).toBe(shekelsToAgorot(400));
+    expect(summary.unknownAmountCount).toBe(1);
+    expect(summary.unknownAmountPaidAgorot).toBe(shekelsToAgorot(400));
+    // שתי ההוראות פעילות, ולכן שתיהן בצפי החודשי
+    expect(summary.monthlyExpectedAgorot).toBe(shekelsToAgorot(900));
+    expect(listSeatCommitments(db, { state: 'unknown' })).toHaveLength(1);
+  });
+
+  it('תשלום מראש ופריסה בלי סכום כלל נדחים בהודעה ברורה', async () => {
+    await expect(
+      createSeatCommitment(db, {
+        memberId,
+        organizationId: orgId,
+        amountAgorot: null,
+        paymentMode: 'paid_upfront',
+      }),
+    ).rejects.toThrow(/נדרש הסכום ששולם/);
+
+    await expect(
+      createSeatCommitment(db, {
+        memberId,
+        organizationId: orgId,
+        amountAgorot: null,
+        paymentMode: 'standing_order',
+        instalmentsCount: 40,
+      }),
+    ).rejects.toThrow(/סכום התשלום החודשי/);
   });
 });
