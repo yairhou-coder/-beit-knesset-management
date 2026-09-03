@@ -45,6 +45,26 @@ function run(commandLine) {
 }
 
 /**
+ * מושך עדכונים מהמאגר, אם התיקייה היא שכפול גיט ואין בה שינויים מקומיים.
+ * נכשל בשקט: תקלה בעדכון לעולם לא תמנע את הפעלת המערכת.
+ */
+function updateFromGit() {
+  if (!fs.existsSync(path.join(ROOT, '.git'))) return;
+
+  const quiet = { cwd: ROOT, shell: true, encoding: 'utf8' };
+  const status = spawnSync('git status --porcelain', quiet);
+  if (status.status !== 0) return; // גיט אינו מותקן או שאין הרשאה
+  if ((status.stdout ?? '').trim() !== '') return; // יש שינויים מקומיים - לא נוגעים בהם
+
+  const before = spawnSync('git rev-parse HEAD', quiet).stdout?.trim();
+  const pull = spawnSync('git pull --ff-only', { cwd: ROOT, shell: true, stdio: 'ignore' });
+  if (pull.status !== 0) return;
+
+  const after = spawnSync('git rev-parse HEAD', quiet).stdout?.trim();
+  if (before && after && before !== after) log('  המערכת עודכנה לגרסה החדשה.');
+}
+
+/**
  * מוחק את תיקיית החבילות, כדי לאפשר התקנה נקייה.
  * בחלונות קבצים עשויים להיות נעולים לרגע, ולכן נעשים ניסיונות חוזרים.
  */
@@ -157,6 +177,9 @@ async function main() {
     fail(`נדרש Node.js בגרסה 22 ומעלה. מותקנת אצלכם גרסה ${process.versions.node}.\n    להורדה: https://nodejs.org (גרסת LTS)`);
     return;
   }
+
+  // עדכון לגרסה האחרונה לפני בדיקת התלויות, שכן העדכון עשוי להוסיף חבילות.
+  updateFromGit();
 
   // התקנת התלויות.
   // בדיקת קיום התיקייה node_modules אינה מספיקה: התקנה שנקטעה באמצע
