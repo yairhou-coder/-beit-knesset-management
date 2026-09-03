@@ -197,12 +197,21 @@ describe('API', () => {
     expect(rejected.status).toBeGreaterThanOrEqual(400);
   });
 
-  it('מקומות וריהוט: עדכון פריסה', async () => {
+  it('מקומות וריהוט: עריכה מלאה בקריאה אחת', async () => {
     const seats = await call('GET', '/api/seats?state=outstanding');
     const id = seats.body.items[0].commitmentId;
-    const updated = await call('PATCH', `/api/seats/${id}`, { instalmentsCount: 25 });
+
+    const updated = await call('PATCH', `/api/seats/${id}`, {
+      instalmentsCount: 25,
+      instalmentShekels: 800,
+      dayOfMonth: 7,
+      orderStatus: 'paused',
+    });
     expect(updated.status).toBe(200);
     expect(updated.body.item.instalmentsCount).toBe(25);
+    expect(updated.body.item.instalmentAgorot).toBe(80_000);
+    expect(updated.body.item.dayOfMonth).toBe(7);
+    expect(updated.body.item.standingOrder.status).toBe('paused');
   });
 
   it('תקציב: אומדן מול ביצוע', async () => {

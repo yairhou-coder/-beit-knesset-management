@@ -13,6 +13,7 @@ import {
   createSeatCommitment,
   getSeatSummary,
   listSeatCommitments,
+  updateSeat,
   updateSeatPlan,
 } from '../src/services/seats.js';
 import {
@@ -423,5 +424,105 @@ describe('מקומות וריהוט', () => {
         instalmentsCount: 40,
       }),
     ).rejects.toThrow(/סכום התשלום החודשי/);
+  });
+
+  // -------------------------------------------------------------------------
+  // עריכה ממסך אחד: ההתחייבות והוראת הקבע נערכות יחד
+  // -------------------------------------------------------------------------
+
+  it('עריכה משנה את הסכום החודשי ואת יום החיוב על ההוראה', async () => {
+    const { commitment } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(400),
+      firstPaymentDate: '2026-01-10',
+    });
+
+    const updated = updateSeat(db, commitment.commitmentId, {
+      instalmentAgorot: shekelsToAgorot(650),
+      dayOfMonth: 3,
+    });
+
+    expect(updated.instalmentAgorot).toBe(shekelsToAgorot(650));
+    expect(updated.dayOfMonth).toBe(3);
+    expect(updated.standingOrder?.amountAgorot).toBe(shekelsToAgorot(650));
+  });
+
+  it('עריכה מזינה סכום כולל ומחשבת יתרה, ובאותה פעולה מעדכנת את החיוב', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    await chargeStandingOrder(db, standingOrderId!, '2026-01');
+
+    const updated = updateSeat(db, commitment.commitmentId, {
+      amountAgorot: shekelsToAgorot(9000),
+      instalmentsCount: 18,
+      instalmentAgorot: shekelsToAgorot(500),
+      dayOfMonth: 15,
+    });
+
+    expect(updated.amountAgorot).toBe(shekelsToAgorot(9000));
+    expect(updated.paidAgorot).toBe(shekelsToAgorot(500));
+    expect(updated.balanceAgorot).toBe(shekelsToAgorot(8500));
+    expect(updated.instalmentsCount).toBe(18);
+    expect(updated.dayOfMonth).toBe(15);
+  });
+
+  it('מחיקת הסכום הכולל מחזירה למצב "לא ידוע" בלי לגעת בתשלומים', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: shekelsToAgorot(5000),
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+    await chargeStandingOrder(db, standingOrderId!, '2026-01');
+
+    const cleared = updateSeat(db, commitment.commitmentId, { amountAgorot: null });
+
+    expect(cleared.amountConfirmed).toBe(false);
+    expect(cleared.amountAgorot).toBeNull();
+    expect(cleared.balanceAgorot).toBeNull();
+    expect(cleared.instalmentsCount).toBeNull();
+    // התשלום שבוצע נשאר
+    expect(cleared.paidAgorot).toBe(shekelsToAgorot(500));
+    expect(cleared.instalmentsPaid).toBe(1);
+  });
+
+  it('השהיית ההוראה עוצרת את החיוב הבא', async () => {
+    const { commitment } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(500),
+    });
+
+    const paused = updateSeat(db, commitment.commitmentId, { orderStatus: 'paused' });
+    expect(paused.standingOrder?.status).toBe('paused');
+    expect(paused.nextChargeDate).toBeNull();
+
+    const resumed = updateSeat(db, commitment.commitmentId, { orderStatus: 'active' });
+    expect(resumed.standingOrder?.status).toBe('active');
+    expect(resumed.nextChargeDate).not.toBeNull();
+  });
+
+  it('עריכת סכום חודשי להתחייבות ללא הוראת קבע נדחית בהסבר', async () => {
+    const { commitment } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: shekelsToAgorot(5000),
+      paymentMode: 'manual',
+    });
+
+    expect(() =>
+      updateSeat(db, commitment.commitmentId, { instalmentAgorot: shekelsToAgorot(300) }),
+    ).toThrow(/אין הוראת קבע/);
   });
 });

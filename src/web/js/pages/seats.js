@@ -155,7 +155,7 @@ export async function renderSeats(route) {
         cell: (row) =>
           row.amountConfirmed
             ? `<strong>${money(row.amountAgorot)}</strong>`
-            : `<button class="btn small" data-amount="${row.commitmentId}">הזנת סכום</button>`,
+            : `<button class="btn small" data-edit="${row.commitmentId}">הזנת סכום</button>`,
       },
       {
         header: 'תשלום חודשי',
@@ -197,10 +197,15 @@ export async function renderSeats(route) {
       },
       {
         header: '',
-        cell: (row) =>
-          !row.amountConfirmed || row.balanceAgorot > 0
-            ? `<button class="btn small primary" data-pay="${row.commitmentId}">תשלום</button>`
-            : '',
+        cell: (row) => `
+          <div class="btn-row">
+            ${
+              !row.amountConfirmed || row.balanceAgorot > 0
+                ? `<button class="btn small primary" data-pay="${row.commitmentId}">תשלום</button>`
+                : ''
+            }
+            <button class="btn small" data-edit="${row.commitmentId}">עריכה</button>
+          </div>`,
       },
     ],
     data.items,
@@ -245,43 +250,114 @@ export function bindSeats(root, reload) {
     );
   });
 
-  root.querySelectorAll('[data-amount]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const row = button.closest('tr');
-      const name = row?.querySelector('a')?.textContent?.trim() ?? '';
-      openAmountModal({ commitmentId: Number(button.dataset.amount), memberName: name, onDone: reload });
-    });
+  root.querySelectorAll('[data-edit]').forEach((button) => {
+    button.addEventListener('click', () =>
+      void openSeatEditModal({ commitmentId: Number(button.dataset.edit), onDone: reload }),
+    );
   });
 }
 
 /**
- * הזנת הסכום הכולל שסוכם עם חבר, כשהוא נודע.
+ * עריכת שורת מקום/ריהוט.
  *
- * מרגע ההזנה יש להתחייבות יתרה אמיתית, וההוראה תפסיק לחייב כשתסולק.
+ * כל מה שקשור לחבר הזה במקום אחד: הסכום שסוכם, פריסת התשלומים, החיוב
+ * החודשי, יום החיוב ומצב ההוראה. הגבאי לא צריך לדעת שמאחורי הקלעים
+ * מדובר בשתי רשומות נפרדות.
  */
-export function openAmountModal({ commitmentId, memberName, onDone }) {
+export async function openSeatEditModal({ commitmentId, onDone }) {
+  const all = await api.seats({ state: 'all' });
+  const row = all.items.find((item) => item.commitmentId === commitmentId);
+  if (!row) {
+    toast('ההתחייבות לא נמצאה', 'error');
+    return;
+  }
+
+  const hasOrder = row.standingOrder !== null;
+  const orderStatus = row.standingOrder?.status ?? '';
+
   openModal({
-    title: `סכום ההתחייבות${memberName ? ` · ${memberName}` : ''}`,
+    title: `מקום וריהוט · ${row.member.name}`,
     bodyHtml: `
+      <div class="section-body" style="padding:0">
+        <dl class="kv">
+          <dt>שולם עד היום</dt><dd><strong>${money(row.paidAgorot)}</strong></dd>
+          <dt>תשלומים שבוצעו</dt><dd>${number(row.instalmentsPaid)}</dd>
+          <dt>עמותה</dt><dd>${esc(row.organization.name)}</dd>
+        </dl>
+      </div>
+
       <div class="form-grid">
         ${field(
           'הסכום הכולל שסוכם (₪)',
-          `<input type="number" name="amountShekels" min="0.01" step="0.01" required placeholder="20000" />`,
+          `<input type="number" name="amountShekels" min="0" step="0.01"
+                  value="${row.amountConfirmed ? row.amountAgorot / 100 : ''}"
+                  placeholder="ריק = עדיין לא ידוע" />`,
         )}
-        ${field('מספר תשלומים (אם ידוע)', `<input type="number" name="instalmentsCount" min="1" step="1" />`)}
+        ${field(
+          'מספר תשלומים',
+          `<input type="number" name="instalmentsCount" min="1" step="1"
+                  value="${row.instalmentsCount ?? ''}" placeholder="אם ידוע" />`,
+        )}
+        ${field(
+          'סכום החיוב החודשי (₪)',
+          `<input type="number" name="instalmentShekels" min="0.01" step="0.01"
+                  value="${row.instalmentAgorot ? row.instalmentAgorot / 100 : ''}"
+                  ${hasOrder ? '' : 'disabled'} />`,
+        )}
+        ${field(
+          'יום החיוב בחודש',
+          `<input type="number" name="dayOfMonth" min="1" max="28" step="1"
+                  value="${row.dayOfMonth ?? ''}" ${hasOrder ? '' : 'disabled'} />`,
+        )}
+        ${field(
+          'תאריך התשלום הראשון',
+          `<input type="date" name="firstPaymentDate" value="${esc(row.firstPaymentDate ?? '')}" />`,
+        )}
+        ${field(
+          'מצב הוראת הקבע',
+          `<select name="orderStatus" ${hasOrder ? '' : 'disabled'}>
+             <option value="active"${orderStatus === 'active' ? ' selected' : ''}>פעילה</option>
+             <option value="paused"${orderStatus === 'paused' ? ' selected' : ''}>מושהית</option>
+             <option value="cancelled"${orderStatus === 'cancelled' ? ' selected' : ''}>מבוטלת</option>
+           </select>`,
+        )}
       </div>
       <p class="small muted full">
-        מרגע ההזנה תוצג היתרה שנותרה, וההוראה החודשית תסתיים מאליה כשההתחייבות תסולק.
-        הסכום חייב להיות לפחות כגובה מה שכבר שולם.
+        ${
+          hasOrder
+            ? 'שינוי הסכום החודשי או יום החיוב משפיע על החיובים הבאים בלבד; חיובים שכבר נרשמו אינם משתנים.'
+            : 'להתחייבות הזו אין הוראת קבע, ולכן אין סכום חודשי לערוך. התשלומים נרשמים ידנית.'
+        }
+        ${
+          row.amountConfirmed
+            ? 'מחיקת הסכום הכולל תחזיר אותו למצב "לא ידוע".'
+            : 'הסכום הכולל חייב להיות לפחות כגובה מה שכבר שולם.'
+        }
       </p>`,
-    submitLabel: 'שמירת הסכום',
+    submitLabel: 'שמירה',
     onSubmit: async (formData) => {
-      const result = await api.setSeatAmount(commitmentId, {
-        amountShekels: formData.get('amountShekels'),
-        instalmentsCount: formData.get('instalmentsCount') ? Number(formData.get('instalmentsCount')) : null,
-      });
+      const total = formData.get('amountShekels');
+      const payload = {
+        amountShekels: total === '' ? null : total,
+        instalmentsCount: formData.get('instalmentsCount')
+          ? Number(formData.get('instalmentsCount'))
+          : null,
+        firstPaymentDate: formData.get('firstPaymentDate') || null,
+      };
+      if (hasOrder) {
+        if (formData.get('instalmentShekels')) {
+          payload.instalmentShekels = formData.get('instalmentShekels');
+        }
+        if (formData.get('dayOfMonth')) payload.dayOfMonth = Number(formData.get('dayOfMonth'));
+        payload.orderStatus = formData.get('orderStatus');
+      }
+
+      const result = await api.updateSeat(commitmentId, payload);
+      const item = result.item;
       toast(
-        `הסכום נשמר: ${money(result.item.amountAgorot)} · יתרה ${money(result.item.balanceAgorot)}`,
+        item.amountConfirmed
+          ? `עודכן · התחייבות ${money(item.amountAgorot)} · יתרה ${money(item.balanceAgorot)}`
+          : 'עודכן · הסכום הכולל עדיין לא הוזן',
         'success',
       );
       onDone?.();

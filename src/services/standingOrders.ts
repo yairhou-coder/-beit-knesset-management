@@ -430,3 +430,53 @@ export function setStandingOrderStatus(
   ).run(status, reason ?? null, id);
   return getStandingOrder(db, id);
 }
+
+/**
+ * עדכון פרטי הוראת קבע קיימת: הסכום החודשי, יום החיוב ותאריך ההתחלה.
+ *
+ * הוראה מקושרת להתחייבות (מקום/ריהוט) נערכת ממסך המקומות, כדי שכל מה
+ * שקשור לאותה התחייבות יישב במקום אחד.
+ */
+export function updateStandingOrder(
+  db: Db,
+  id: number,
+  patch: {
+    amountAgorot?: number;
+    dayOfMonth?: number;
+    startDate?: string;
+    notes?: string | null;
+  },
+): StandingOrderView {
+  getStandingOrderRow(db, id);
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+
+  if (patch.amountAgorot !== undefined) {
+    assertPositiveAgorot(patch.amountAgorot, 'סכום הוראת הקבע');
+    sets.push('amount_agorot = ?');
+    values.push(patch.amountAgorot);
+  }
+  if (patch.dayOfMonth !== undefined) {
+    if (patch.dayOfMonth < 1 || patch.dayOfMonth > 28) {
+      throw new ValidationError('יום החיוב חייב להיות בין 1 ל-28');
+    }
+    sets.push('day_of_month = ?');
+    values.push(patch.dayOfMonth);
+  }
+  if (patch.startDate !== undefined) {
+    sets.push('start_date = ?');
+    values.push(patch.startDate);
+  }
+  if (patch.notes !== undefined) {
+    sets.push('notes = ?');
+    values.push(patch.notes);
+  }
+
+  if (sets.length > 0) {
+    db.prepare(
+      `UPDATE standing_orders SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`,
+    ).run(...values, id);
+  }
+  return getStandingOrder(db, id);
+}

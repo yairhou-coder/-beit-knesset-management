@@ -20,7 +20,11 @@ import type { CommitmentStatus, PaymentMethod } from '../domain/types.js';
 import { createCommitment } from './commitments.js';
 import { ValidationError } from './errors.js';
 import { recordPayment } from './payments.js';
-import { createStandingOrder } from './standingOrders.js';
+import {
+  createStandingOrder,
+  setStandingOrderStatus,
+  updateStandingOrder,
+} from './standingOrders.js';
 import { WhereBuilder, today } from './util.js';
 
 /** מפתח סוג ההתחייבות שמייצג מקום/ריהוט. */
@@ -537,6 +541,87 @@ export function confirmSeatAmount(
       `UPDATE standing_orders SET status = 'completed', updated_at = datetime('now')
         WHERE commitment_id = ? AND status = 'active'`,
     ).run(commitmentId);
+  }
+
+  const [view] = listSeatCommitments(db, { memberId: row.member_id, state: 'all' }).filter(
+    (item) => item.commitmentId === commitmentId,
+  );
+  if (!view) throw new ValidationError('ההתחייבות לא נמצאה לאחר העדכון');
+  return view;
+}
+
+/**
+ * עריכה מלאה של שורת מקום/ריהוט ממסך אחד.
+ *
+ * ההתחייבות והוראת הקבע שמשלמת אותה הן שתי רשומות, אבל עבור הגבאי הן
+ * דבר אחד: "הסידור של החבר הזה למקום". לכן הכל נערך כאן - הסכום הכולל,
+ * מספר התשלומים, הסכום החודשי, יום החיוב ומצב ההוראה - במקום לפזר את
+ * זה בין שני מסכים.
+ */
+export interface SeatEditInput {
+  /** הסכום הכולל שסוכם. null מחזיר אותו למצב "לא ידוע". */
+  amountAgorot?: number | null;
+  instalmentsCount?: number | null;
+  firstPaymentDate?: string | null;
+  /** סכום החיוב החודשי, על הוראת הקבע. */
+  instalmentAgorot?: number;
+  dayOfMonth?: number;
+  /** מצב הוראת הקבע: פעילה, מושהית או מבוטלת. */
+  orderStatus?: 'active' | 'paused' | 'cancelled';
+}
+
+export function updateSeat(
+  db: Db,
+  commitmentId: number,
+  input: SeatEditInput,
+): SeatCommitmentView {
+  const row = db
+    .prepare('SELECT member_id, paid_agorot FROM commitments WHERE id = ?')
+    .get(commitmentId) as { member_id: number; paid_agorot: number } | undefined;
+  if (!row) throw new ValidationError(`התחייבות ${commitmentId} לא נמצאה`);
+
+  // --- הסכום הכולל ---------------------------------------------------------
+  if (input.amountAgorot !== undefined) {
+    if (input.amountAgorot === null) {
+      // חזרה ל"לא ידוע": הסכום הופך שוב למצטבר ששולם בלבד
+      db.prepare(
+        `UPDATE commitments SET amount_confirmed = 0, amount_agorot = MAX(paid_agorot, 1),
+           instalments_count = NULL, status = CASE WHEN status = 'cancelled' THEN 'cancelled'
+                                                   ELSE 'open' END,
+           updated_at = datetime('now') WHERE id = ?`,
+      ).run(commitmentId);
+    } else {
+      confirmSeatAmount(db, commitmentId, input.amountAgorot, {
+        instalmentsCount: input.instalmentsCount ?? null,
+      });
+    }
+  } else if (input.instalmentsCount !== undefined) {
+    updateSeatPlan(db, commitmentId, { instalmentsCount: input.instalmentsCount });
+  }
+
+  if (input.firstPaymentDate !== undefined) {
+    updateSeatPlan(db, commitmentId, { firstPaymentDate: input.firstPaymentDate });
+  }
+
+  // --- הוראת הקבע ----------------------------------------------------------
+  const order = db
+    .prepare('SELECT id FROM standing_orders WHERE commitment_id = ?')
+    .get(commitmentId) as { id: number } | undefined;
+
+  if (order) {
+    const patch: Parameters<typeof updateStandingOrder>[2] = {};
+    if (input.instalmentAgorot !== undefined) patch.amountAgorot = input.instalmentAgorot;
+    if (input.dayOfMonth !== undefined) patch.dayOfMonth = input.dayOfMonth;
+    if (input.firstPaymentDate) patch.startDate = input.firstPaymentDate;
+    if (Object.keys(patch).length > 0) updateStandingOrder(db, order.id, patch);
+
+    if (input.orderStatus !== undefined) {
+      setStandingOrderStatus(db, order.id, input.orderStatus);
+    }
+  } else if (input.instalmentAgorot !== undefined || input.dayOfMonth !== undefined) {
+    throw new ValidationError(
+      'להתחייבות הזו אין הוראת קבע, ולכן אין סכום חודשי או יום חיוב לעדכן',
+    );
   }
 
   const [view] = listSeatCommitments(db, { memberId: row.member_id, state: 'all' }).filter(

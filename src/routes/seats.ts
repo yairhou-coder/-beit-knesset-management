@@ -6,7 +6,7 @@ import {
   createSeatCommitment,
   getSeatSummary,
   listSeatCommitments,
-  updateSeatPlan,
+  updateSeat,
   type SeatFilters,
   type SeatPaymentMode,
 } from '../services/seats.js';
@@ -107,21 +107,40 @@ export function createSeatsRouter(db: Db): Router {
     });
   });
 
+  /**
+   * עריכה מלאה של שורת מקום/ריהוט: הסכום הכולל, מספר התשלומים,
+   * הסכום החודשי, יום החיוב ומצב ההוראה - הכל מכאן.
+   */
   router.patch('/:id', (req, res) => {
     const input = body(req);
     const id = intParam(req.params['id'], 'id');
-    const patch: Parameters<typeof updateSeatPlan>[2] = {};
+    const patch: Parameters<typeof updateSeat>[2] = {};
+
+    if (input['amountAgorot'] !== undefined || input['amountShekels'] !== undefined) {
+      const raw = input['amountAgorot'] ?? input['amountShekels'];
+      patch.amountAgorot =
+        raw === null || raw === '' ? null : readAmountAgorot(input, 'סכום ההתחייבות');
+    }
     if (input['instalmentsCount'] !== undefined) {
       patch.instalmentsCount = optionalInt(input['instalmentsCount']) ?? null;
     }
     if (input['firstPaymentDate'] !== undefined) {
       patch.firstPaymentDate = optionalString(input['firstPaymentDate']) ?? null;
     }
-    updateSeatPlan(db, id, patch);
-    const [item] = listSeatCommitments(db, { state: 'all' }).filter(
-      (row) => row.commitmentId === id,
-    );
-    res.json({ item });
+    if (input['instalmentAgorot'] !== undefined || input['instalmentShekels'] !== undefined) {
+      patch.instalmentAgorot = readAmountAgorot(
+        { amountAgorot: input['instalmentAgorot'], amountShekels: input['instalmentShekels'] },
+        'סכום התשלום החודשי',
+      );
+    }
+    const day = optionalInt(input['dayOfMonth']);
+    if (day !== undefined) patch.dayOfMonth = day;
+    const orderStatus = optionalString(input['orderStatus']);
+    if (orderStatus === 'active' || orderStatus === 'paused' || orderStatus === 'cancelled') {
+      patch.orderStatus = orderStatus;
+    }
+
+    res.json({ item: updateSeat(db, id, patch) });
   });
 
   return router;

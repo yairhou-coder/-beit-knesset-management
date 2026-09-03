@@ -158,8 +158,15 @@ export async function renderExpenses(route) {
     'אין נתונים',
   );
 
+  const intro = `
+    <p class="small" style="padding:4px">
+      כאן נרשמת <strong>כל הוצאה שיצאה בפועל</strong> — עם תאריך, ספק, סכום וחשבונית.
+      התכנון והאומדנים נמצאים במסך <a href="#/budget">התקציב</a>, והוא משווה את עצמו
+      למספרים שכאן.
+    </p>`;
+
   return `
-    ${section('סיכום הוצאות', cards, { hint: 'לחיצה על כרטיס מסננת את הרשימה' })}
+    ${section('סיכום הוצאות', intro + cards, { hint: 'לחיצה על כרטיס מסננת את הרשימה' })}
     ${section('סינון', filtersForm(params, cats))}
     ${section('הוצאות', rows, {
       hint:

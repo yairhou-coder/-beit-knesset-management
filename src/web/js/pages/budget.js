@@ -134,7 +134,7 @@ export async function renderBudget() {
       { header: 'קטגוריה', cell: (row) => esc(row.name) },
       { header: 'אופי', cell: (row) => `<span class="small muted">${esc(row.kindLabel)}</span>` },
       {
-        header: 'אומדן',
+        header: 'אומדן מתוכנן',
         className: 'num',
         cell: (row) =>
           row.plannedAmountAgorot === null
@@ -174,8 +174,17 @@ export async function renderBudget() {
     'אין קטגוריות הוצאה',
   );
 
+  // ההבחנה בין תכנון לביצוע היא כל העניין של המסך הזה, ולכן היא כתובה
+  // בראשו במפורש ולא מונחת כידועה מאליה.
+  const intro = `
+    <p class="small" style="padding:4px">
+      <strong>מסך זה אינו רושם הוצאות.</strong> הוא מציג את מה ש<strong>תכננת</strong> להוציא
+      (אומדן) מול מה ש<strong>יצא בפועל</strong> — והנתונים בעמודת "בפועל" נלקחים
+      ממסך <a href="#/expenses">ההוצאות</a>. כאן רואים את הפער; שם רושמים כל הוצאה.
+    </p>`;
+
   return `
-    ${section('תמונת המצב החודשית', cards)}
+    ${section('תמונת המצב החודשית', intro + cards)}
     ${section('עד לאן מגיע הכסף', coverage + verdict, {
       hint: 'לפי סדר הקטגוריות',
       flush: true,
