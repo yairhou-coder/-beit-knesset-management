@@ -61,6 +61,11 @@ export function bindMembersList(root) {
   });
 }
 
+/** תיאור "מוצגות N אחרונות מתוך M", כאשר יש יותר ממה שמוצג. */
+function showing(shown, total) {
+  return total > shown ? `${number(shown)} אחרונות מתוך ${number(total)}` : `${number(total)} רשומות`;
+}
+
 /** כרטיס חבר מלא. */
 export async function renderMemberCard(route) {
   const memberId = Number(route.segments[1]);
@@ -182,9 +187,20 @@ export async function renderMemberCard(route) {
     })}
     ${section('פרטי החבר', details)}
     ${section('יתרות לפי עמותה', balancesTable, { flush: true })}
-    ${section('התחייבויות', commitmentsTable, { flush: true })}
-    ${section('קבלות שהופקו עבור החבר', receiptsTable, { flush: true })}
-    ${section('תשלומים', paymentsTable, { flush: true })}
+    ${section('התחייבויות', commitmentsTable, {
+      hint: `${number(card.counts.commitments)} רשומות`,
+      flush: true,
+    })}
+    ${section('קבלות שהופקו עבור החבר', receiptsTable, {
+      hint: showing(card.receipts.length, card.counts.receipts),
+      actions: `<a class="btn small" href="#/receipts?memberId=${memberId}">כל הקבלות</a>`,
+      flush: true,
+    })}
+    ${section('תשלומים', paymentsTable, {
+      hint: showing(card.payments.length, card.counts.payments),
+      actions: `<a class="btn small" href="#/payments?memberId=${memberId}">כל התשלומים</a>`,
+      flush: true,
+    })}
     ${section('הוראות קבע', standingOrdersTable, { flush: true })}`;
 }
 

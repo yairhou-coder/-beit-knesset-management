@@ -139,12 +139,18 @@ export class MockReceiptProvider implements ReceiptProvider {
 
     const providerReceiptId = `mrc_${crypto.randomBytes(8).toString('hex')}`;
     const receiptNumber = `${this.numberPrefix}${this.nextNumber++}`;
+    // הקבלה נושאת את תאריך העסקה שנשלח בבקשה, ולא את מועד יצירת הרשומה.
+    // כך גם קבלה שמופקת באיחור, או היסטוריה שנטענת למערכת, נושאת את
+    // התאריך הנכון מבחינה חשבונאית.
+    const issuedAt = /^\d{4}-\d{2}-\d{2}$/.test(request.issueDate)
+      ? `${request.issueDate}T12:00:00.000Z`
+      : new Date().toISOString();
     const stored: StoredReceipt = {
       providerReceiptId,
       idempotencyKey: request.idempotencyKey,
       receiptNumber,
       status: 'issued',
-      issuedAt: new Date().toISOString(),
+      issuedAt,
       amountAgorot: request.amountAgorot,
       documentType: request.documentType,
       url: `${this.baseUrl}/receipts/${providerReceiptId}.pdf`,

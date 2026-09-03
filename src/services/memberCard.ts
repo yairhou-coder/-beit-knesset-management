@@ -31,6 +31,11 @@ export interface MemberCard {
     openCommitments: number;
     receiptsIssued: number;
   };
+  /**
+   * מספר הרשומות הכולל של החבר. הרשימות עצמן מוגבלות לאחרונות בלבד,
+   * שכן חבר ותיק עם הוראת קבע צובר מאות תשלומים וקבלות.
+   */
+  counts: { commitments: number; payments: number; incomes: number; receipts: number };
   balancesByOrganization: MemberBalanceByOrganization[];
   commitments: CommitmentView[];
   payments: PaymentView[];
@@ -46,8 +51,19 @@ export function getMemberCard(
   options: { organizationId?: number; limit?: number } = {},
 ): MemberCard {
   const member = getMember(db, memberId);
-  const limit = options.limit ?? 200;
+  // ברירת מחדל מצומצמת: הכרטיס מציג את הפעילות האחרונה, ומפנה לרשימות
+  // המלאות. בלעדיה, חבר עם הוראת קבע ותיקה מייצר מסך באורך מאות שורות.
+  const limit = options.limit ?? 12;
   const orgFilter = options.organizationId ? { organizationId: options.organizationId } : {};
+
+  const countOf = (table: string): number => {
+    const where = options.organizationId ? 'AND organization_id = ?' : '';
+    const params = options.organizationId ? [memberId, options.organizationId] : [memberId];
+    const row = db
+      .prepare(`SELECT COUNT(*) AS total FROM ${table} WHERE member_id = ? ${where}`)
+      .get(...params) as { total: number };
+    return row.total;
+  };
 
   const balanceRows = db
     .prepare(
@@ -86,15 +102,30 @@ export function getMemberCard(
 
   return {
     member,
+    counts: {
+      commitments: countOf('commitments'),
+      payments: countOf('payments'),
+      incomes: countOf('incomes'),
+      receipts: countOf('receipts'),
+    },
     totals: {
       committedAgorot: balancesByOrganization.reduce((sum, row) => sum + row.committedAgorot, 0),
       paidAgorot: balancesByOrganization.reduce((sum, row) => sum + row.paidAgorot, 0),
       outstandingAgorot: balancesByOrganization.reduce((sum, row) => sum + row.outstandingAgorot, 0),
       openCommitments: balancesByOrganization.reduce((sum, row) => sum + row.openCommitments, 0),
-      receiptsIssued: receipts.filter((receipt) => receipt.status === 'issued').length,
+      receiptsIssued: (() => {
+        const where = options.organizationId ? 'AND organization_id = ?' : '';
+        const params = options.organizationId ? [memberId, options.organizationId] : [memberId];
+        const row = db
+          .prepare(
+            `SELECT COUNT(*) AS total FROM receipts WHERE member_id = ? AND status = 'issued' ${where}`,
+          )
+          .get(...params) as { total: number };
+        return row.total;
+      })(),
     },
     balancesByOrganization,
-    commitments: listCommitments(db, { memberId, ...orgFilter, limit }),
+    commitments: listCommitments(db, { memberId, ...orgFilter, limit: 200 }),
     payments: listPayments(db, { memberId, ...orgFilter, limit }),
     incomes: listIncomes(db, { memberId, ...orgFilter, limit }),
     receipts,

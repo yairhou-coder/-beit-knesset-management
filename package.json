@@ -16,6 +16,7 @@
     "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/db/schema.sql','dist/db/schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx src/db/seed.ts",
+    "import": "tsx src/db/import.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

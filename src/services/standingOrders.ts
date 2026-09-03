@@ -211,13 +211,19 @@ export async function registerWithProvider(db: Db, id: number): Promise<Standing
 
 /**
  * מבצע חיוב חודשי של הוראת קבע.
+ *
  * `period` (YYYY-MM) הוא חלק ממפתח ה-idempotency, כדי שהרצה כפולה של
  * תהליך החיוב באותו חודש לא תיצור שני תשלומים.
+ *
+ * `paymentDate` מאפשר לרשום חיוב בתאריך שאינו היום - למשל בעת טעינת
+ * היסטוריית חיובים קיימת למערכת. בלעדיו כל החיובים היו נרשמים בתאריך
+ * הטעינה, והדוחות החודשיים היו מציגים את כולם כאילו נגבו החודש.
  */
 export async function chargeStandingOrder(
   db: Db,
   id: number,
   period: string = today().slice(0, 7),
+  options: { paymentDate?: string } = {},
 ): Promise<RecordPaymentResult> {
   const order = getStandingOrderRow(db, id);
   if (order.status !== 'active') {
@@ -264,7 +270,7 @@ export async function chargeStandingOrder(
     memberId: order.member_id,
     standingOrderId: id,
     amountAgorot: order.amount_agorot,
-    paymentDate: today(),
+    paymentDate: options.paymentDate ?? today(),
     method: order.method,
     status: succeeded ? 'completed' : 'failed',
     idempotencyKey,
@@ -276,9 +282,9 @@ export async function chargeStandingOrder(
 
   if (succeeded) {
     db.prepare(
-      `UPDATE standing_orders SET last_charge_at = datetime('now'), last_failure_reason = NULL,
+      `UPDATE standing_orders SET last_charge_at = ?, last_failure_reason = NULL,
          status = 'active', updated_at = datetime('now') WHERE id = ?`,
-    ).run(id);
+    ).run(options.paymentDate ?? new Date().toISOString(), id);
   } else {
     db.prepare(
       `UPDATE standing_orders SET last_failure_reason = ?, status = 'failed',
