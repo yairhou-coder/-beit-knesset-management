@@ -52,16 +52,31 @@ function updateFromGit() {
   if (!fs.existsSync(path.join(ROOT, '.git'))) return;
 
   const quiet = { cwd: ROOT, shell: true, encoding: 'utf8' };
-  const status = spawnSync('git status --porcelain', quiet);
-  if (status.status !== 0) return; // גיט אינו מותקן או שאין הרשאה
-  if ((status.stdout ?? '').trim() !== '') return; // יש שינויים מקומיים - לא נוגעים בהם
+  const head = () => spawnSync('git rev-parse HEAD', quiet).stdout?.trim();
 
-  const before = spawnSync('git rev-parse HEAD', quiet).stdout?.trim();
-  const pull = spawnSync('git pull --ff-only', { cwd: ROOT, shell: true, stdio: 'ignore' });
-  if (pull.status !== 0) return;
+  const before = head();
+  if (!before) return; // גיט אינו מותקן, או שאין הרשאה
 
-  const after = spawnSync('git rev-parse HEAD', quiet).stdout?.trim();
-  if (before && after && before !== after) log('  המערכת עודכנה לגרסה החדשה.');
+  // git עצמו מסרב לדרוס שינויים מקומיים, ולכן אין צורך לחסום מראש.
+  let pull = spawnSync('git pull --ff-only', { cwd: ROOT, shell: true, stdio: 'ignore' });
+
+  if (pull.status !== 0) {
+    // npm install משכתב את package-lock.json, וזה לבדו חוסם משיכה.
+    // הקובץ נוצר אוטומטית, ולכן אפשר להחזירו לגרסת המאגר ולנסות שוב.
+    const status = spawnSync('git status --porcelain', quiet).stdout ?? '';
+    const dirty = status.split('\n').map((line) => line.slice(3).trim()).filter(Boolean);
+    if (dirty.length > 0 && dirty.every((file) => file === 'package-lock.json')) {
+      spawnSync('git checkout -- package-lock.json', { cwd: ROOT, shell: true, stdio: 'ignore' });
+      pull = spawnSync('git pull --ff-only', { cwd: ROOT, shell: true, stdio: 'ignore' });
+    }
+  }
+
+  const after = head();
+  if (before !== after) {
+    log('  המערכת עודכנה לגרסה החדשה.');
+  } else if (pull.status !== 0) {
+    log('  (לא ניתן היה לבדוק עדכונים כרגע - ממשיך עם הגרסה הקיימת)');
+  }
 }
 
 /**
