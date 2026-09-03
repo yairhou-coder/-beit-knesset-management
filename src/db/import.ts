@@ -44,6 +44,15 @@ interface ImportedMember {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * מספר התשלומים שבהם נפרסת התחייבות המקום/ריהוט.
+ *
+ * קובץ האקסל כולל את סכום התשלום החודשי בלבד ולא את הסכום הכולל, ולכן
+ * הסכום הכולל נגזר כאן. ניתן לשנות את הערך, או לתקן כל התחייבות בנפרד
+ * במסך ההתחייבויות.
+ */
+const SEAT_INSTALMENTS = 20;
+
 function loadMembers(): ImportedMember[] {
   const file = path.join(here, 'import-data', 'members.json');
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { members: ImportedMember[] };
@@ -121,6 +130,7 @@ export async function importFromExcel(
   // --- חברים והוראות קבע ----------------------------------------------------
   log(`  מייבא ${members.length} חברים...`);
   const created: Array<{ memberId: number; source: ImportedMember; orders: number[] }> = [];
+  const seatCommitments: Array<{ commitmentId: number; orderId: number }> = [];
 
   for (const source of members) {
     const member = createMember(db, {
@@ -149,10 +159,24 @@ export async function importFromExcel(
     });
     orders.push(dues.id);
 
+    // מקום/ריהוט הוא התחייבות עם סכום כולל, ולא חיוב חודשי ללא סוף.
+    // ההוראה החודשית משלמת אותה בתשלומים, וכל חיוב מקטין את היתרה.
+    const seatTotal = shekelsToAgorot(source.seatDuesShekels * SEAT_INSTALMENTS);
+    const seatCommitment = createCommitment(db, {
+      memberId: member.id,
+      organizationId: synagogue.id,
+      commitmentTypeId: typeId('seat'),
+      amountAgorot: seatTotal,
+      commitmentDate: startDate,
+      plannedPaymentMethod: 'standing_order',
+      notes: `מקום/ריהוט · ${source.seats} מקומות · ${SEAT_INSTALMENTS} תשלומים של ${source.seatDuesShekels} ₪`,
+    });
+
     const seat = createStandingOrder(db, {
       memberId: member.id,
       organizationId: synagogue.id,
       commitmentTypeId: typeId('seat'),
+      commitmentId: seatCommitment.id,
       amountAgorot: shekelsToAgorot(source.seatDuesShekels),
       dayOfMonth,
       method: 'standing_order',
@@ -160,6 +184,7 @@ export async function importFromExcel(
       notes: `הו״ק מקום/ריהוט · ${source.seats} מקומות`,
     });
     orders.push(seat.id);
+    seatCommitments.push({ commitmentId: seatCommitment.id, orderId: seat.id });
 
     // 4 הספרות האחרונות של הכרטיס, כפי שהופיעו בקובץ
     for (const orderId of orders) {
@@ -186,8 +211,12 @@ export async function importFromExcel(
       // חיוב שמועדו טרם הגיע - למשל בחודש הנוכחי - אינו נרשם
       if (chargeDate < startDate || chargeDate > now) continue;
       for (const orderId of entry.orders) {
-        await chargeStandingOrder(db, orderId, period, { paymentDate: chargeDate });
-        charges += 1;
+        try {
+          await chargeStandingOrder(db, orderId, period, { paymentDate: chargeDate });
+          charges += 1;
+        } catch {
+          // הוראה שסיימה לשלם את ההתחייבות שלה - אין עוד מה לחייב
+        }
       }
     }
   }
@@ -297,14 +326,86 @@ export async function importFromExcel(
     receiptRequired: false,
   });
 
-  // הוצאות, כדי שהדוח המאוחד יציג תמונה מלאה
-  const expense = db.prepare(
-    `INSERT INTO expenses (organization_id, category, supplier, amount_agorot, expense_date, method, description)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  // --- הוצאות להמחשה, על פני שנה ---------------------------------------
+  log('  מוסיף הוצאות להמחשה...');
+  const categoryId = (key: string): number =>
+    (db.prepare('SELECT id FROM expense_categories WHERE key = ?').get(key) as { id: number }).id;
+
+  const monthlyExpenses: Array<{ key: string; supplier: string; amount: number; day: number }> = [
+    { key: 'rabbi_salary', supplier: 'הרב', amount: 8000, day: 1 },
+    { key: 'gabai_salary', supplier: 'גבאי', amount: 2500, day: 1 },
+    { key: 'cleaning', supplier: 'שירותי ניקיון', amount: 1800, day: 5 },
+    { key: 'electricity', supplier: 'חברת החשמל', amount: 1450, day: 12 },
+    { key: 'water', supplier: 'תאגיד המים', amount: 320, day: 12 },
+  ];
+  const weeklyKiddush = { key: 'kiddush', supplier: 'מכולת השכונה', amounts: [520, 640, 700, 880] };
+
+  const insertExpense = db.prepare(
+    `INSERT INTO expenses
+       (organization_id, category_id, category, event_id, supplier, amount_agorot,
+        expense_date, method, invoice_number, description, notes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
   );
-  expense.run(synagogue.id, 'חשמל', 'חברת החשמל', shekelsToAgorot(1450), addDays(today(), -12), 'bank_transfer', '[דוגמה]');
-  expense.run(synagogue.id, 'ניקיון', 'שירותי ניקיון', shekelsToAgorot(2200), addDays(today(), -20), 'bank_transfer', '[דוגמה]');
-  expense.run(achvatTorah.id, 'ספרים', 'הוצאת ספרים', shekelsToAgorot(3400), addDays(today(), -25), 'credit_card', '[דוגמה]');
+  const categoryName = (id: number): string =>
+    (db.prepare('SELECT name FROM expense_categories WHERE id = ?').get(id) as { name: string }).name;
+
+  let expenseCount = 0;
+  const addExpense = (
+    orgId: number,
+    key: string,
+    supplier: string,
+    amount: number,
+    expenseDate: string,
+    eventId: number | null,
+    description: string,
+  ): void => {
+    const cid = categoryId(key);
+    insertExpense.run(
+      orgId,
+      cid,
+      categoryName(cid),
+      eventId,
+      supplier,
+      shekelsToAgorot(amount),
+      expenseDate,
+      'bank_transfer',
+      String(100000 + Math.floor(random() * 899999)),
+      description,
+      '[דוגמה]',
+    );
+    expenseCount += 1;
+  };
+
+  for (let monthsAgo = 11; monthsAgo >= 0; monthsAgo -= 1) {
+    const anchor = new Date();
+    anchor.setUTCMonth(anchor.getUTCMonth() - monthsAgo, 1);
+    const month = anchor.toISOString().slice(0, 7);
+
+    for (const item of monthlyExpenses) {
+      const when = `${month}-${String(item.day).padStart(2, '0')}`;
+      if (when > today()) continue;
+      addExpense(synagogue.id, item.key, item.supplier, item.amount, when, null, `${item.supplier} - ${month}`);
+    }
+
+    // קידוש שבועי
+    for (const week of [4, 11, 18, 25]) {
+      const when = `${month}-${String(week).padStart(2, '0')}`;
+      if (when > today()) continue;
+      const amount = weeklyKiddush.amounts[Math.floor(random() * weeklyKiddush.amounts.length)]!;
+      addExpense(synagogue.id, weeklyKiddush.key, weeklyKiddush.supplier, amount, when, null, 'קידוש שבת');
+    }
+  }
+
+  // הוצאות שמשויכות לאירועים, כדי לראות כמה עלה כל אירוע
+  addExpense(synagogue.id, 'holidays', 'קייטרינג', 6800, addDays(today(), -38), holiday.id, 'סעודות ראש השנה');
+  addExpense(synagogue.id, 'holidays', 'ספרים ומחזורים', 2400, addDays(today(), -42), holiday.id, 'מחזורים לחג');
+  addExpense(synagogue.id, 'meals', 'מכולת השכונה', 1350, addDays(today(), -69), shabbat.id, 'קידוש מורחב');
+  addExpense(achvatTorah.id, 'special_events', 'אולם אירועים', 14500, addDays(today(), -14), dinner.id, 'הדינר השנתי');
+  addExpense(achvatTorah.id, 'books', 'הוצאת ספרים', 3400, addDays(today(), -25), null, 'ספרי לימוד לכולל');
+  addExpense(synagogue.id, 'maintenance', 'חשמלאי', 1750, addDays(today(), -33), null, 'תיקון תאורה בעזרת נשים');
+  addExpense(synagogue.id, 'furniture', 'נגריית שטיבל', 9600, addDays(today(), -55), null, 'שדרוג שולחנות');
+
+  log(`  נוספו ${expenseCount} הוצאות להמחשה.`);
 
   log(`  נוספו ${commitments} התחייבויות להמחשה ו-${examplePayments} תשלומים.`);
 }

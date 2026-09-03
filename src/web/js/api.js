@@ -37,6 +37,7 @@ export function qs(params) {
 
 export const api = {
   get: (path) => request('GET', path),
+  del: (path) => request('DELETE', path),
   post: (path, body) => request('POST', path, body),
   patch: (path, body) => request('PATCH', path, body),
 
@@ -58,6 +59,14 @@ export const api = {
   assignPayment: (id, body) => request('POST', `/payments/${id}/assign`, body),
 
   incomes: (params) => request('GET', `/incomes${qs(params)}`),
+
+  expenses: (params) => request('GET', `/expenses${qs(params)}`),
+  expenseCategories: () => request('GET', '/expenses/categories'),
+  createExpense: (body) => request('POST', '/expenses', body),
+  updateExpense: (id, body) => request('PATCH', `/expenses/${id}`, body),
+  deleteExpense: (id) => request('DELETE', `/expenses/${id}`),
+  scanInvoice: (file) => request('POST', '/expenses/scan-invoice', file),
+  attachInvoice: (id, file) => request('POST', `/expenses/${id}/attachments`, file),
 
   receipts: (params) => request('GET', `/receipts${qs(params)}`),
   retryReceipt: (id) => request('POST', `/receipts/${id}/retry`),

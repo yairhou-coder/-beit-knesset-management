@@ -4,6 +4,7 @@ import { createCatalogRouter } from './catalog.js';
 import { createCollectionsRouter } from './collections.js';
 import { createCommitmentsRouter } from './commitments.js';
 import { createDashboardRouter } from './dashboard.js';
+import { createExpensesRouter } from './expenses.js';
 import { createIncomesRouter } from './incomes.js';
 import { createMembersRouter } from './members.js';
 import { createNotificationsRouter } from './notifications.js';
@@ -24,6 +25,7 @@ export function createApiRouter(db: Db): Router {
   router.use('/commitments', createCommitmentsRouter(db));
   router.use('/payments', createPaymentsRouter(db));
   router.use('/incomes', createIncomesRouter(db));
+  router.use('/expenses', createExpensesRouter(db));
   router.use('/receipts', createReceiptsRouter(db));
   router.use('/members', createMembersRouter(db));
   router.use('/organizations', createOrganizationsRouter(db));

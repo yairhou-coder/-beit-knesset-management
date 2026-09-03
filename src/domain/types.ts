@@ -178,6 +178,7 @@ export const STANDING_ORDER_STATUSES = [
   'cancelled',
   'card_expired',
   'failed',
+  'completed',
 ] as const;
 export type StandingOrderStatus = (typeof STANDING_ORDER_STATUSES)[number];
 
@@ -187,6 +188,7 @@ export const STANDING_ORDER_STATUS_LABELS: Record<StandingOrderStatus, string> =
   cancelled: 'בוטלה',
   card_expired: 'כרטיס פג תוקף',
   failed: 'חיוב נכשל',
+  completed: 'הושלמה',
 };
 
 // ---------------------------------------------------------------------------

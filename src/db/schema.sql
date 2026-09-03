@@ -269,12 +269,16 @@ CREATE TABLE IF NOT EXISTS standing_orders (
   member_id         INTEGER NOT NULL REFERENCES members(id) ON DELETE RESTRICT,
   organization_id   INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
   commitment_type_id INTEGER REFERENCES commitment_types(id) ON DELETE SET NULL,
+  -- הוראת קבע שמשלמת התחייבות בתשלומים (למשל מקום/ריהוט). כל חיוב מקטין
+  -- את יתרת ההתחייבות, וההוראה מסתיימת כאשר ההתחייבות שולמה במלואה.
+  -- הוראת קבע שוטפת, כמו דמי חבר, אינה מקושרת להתחייבות והשדה נשאר ריק.
+  commitment_id     INTEGER REFERENCES commitments(id) ON DELETE SET NULL,
 
   amount_agorot     INTEGER NOT NULL CHECK (amount_agorot > 0),
   day_of_month      INTEGER NOT NULL DEFAULT 1 CHECK (day_of_month BETWEEN 1 AND 28),
   method            TEXT    NOT NULL DEFAULT 'credit_card',
   status            TEXT    NOT NULL DEFAULT 'active'
-                            CHECK (status IN ('active','paused','cancelled','card_expired','failed')),
+                            CHECK (status IN ('active','paused','cancelled','card_expired','failed','completed')),
   start_date        TEXT    NOT NULL,
   end_date          TEXT,
 
@@ -292,25 +296,59 @@ CREATE TABLE IF NOT EXISTS standing_orders (
 CREATE INDEX IF NOT EXISTS idx_standing_orders_member ON standing_orders(member_id);
 CREATE INDEX IF NOT EXISTS idx_standing_orders_org    ON standing_orders(organization_id);
 CREATE INDEX IF NOT EXISTS idx_standing_orders_status ON standing_orders(status);
+CREATE INDEX IF NOT EXISTS idx_standing_orders_commitment ON standing_orders(commitment_id);
 
 -- ---------------------------------------------------------------------------
 -- הוצאות (סעיף 25 - משויכות לעמותה, כדי שדוח מאוחד יוכל להציג תמונה מלאה)
 -- ---------------------------------------------------------------------------
+
+-- קטגוריות הוצאה, מקובצות לפי אופי: משכורות, הוצאות שוטפות,
+-- חגים ואירועים, ואחר. הקיבוץ מאפשר לראות לאן הכסף יוצא ברמת-על.
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  key        TEXT    NOT NULL UNIQUE,
+  name       TEXT    NOT NULL,
+  kind       TEXT    NOT NULL DEFAULT 'ongoing'
+                     CHECK (kind IN ('salary','ongoing','events','maintenance','other')),
+  active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS expenses (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
-  category        TEXT    NOT NULL,
+  category_id     INTEGER REFERENCES expense_categories(id) ON DELETE SET NULL,
+  category        TEXT    NOT NULL,          -- שם הקטגוריה, נשמר גם כטקסט לצורכי היסטוריה
+  -- שיוך לאירוע, כדי לראות כמה עלה חג או אירוע מסוים
+  event_id        INTEGER REFERENCES events(id) ON DELETE SET NULL,
   supplier        TEXT,
   amount_agorot   INTEGER NOT NULL CHECK (amount_agorot > 0),
   expense_date    TEXT    NOT NULL,
   method          TEXT,
   invoice_number  TEXT,
   description     TEXT,
-  created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+  notes           TEXT,
+  created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_expenses_org  ON expenses(organization_id);
-CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_org      ON expenses(organization_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_date     ON expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_event    ON expenses(event_id);
+
+-- חשבוניות וקבצים מצורפים להוצאה
+CREATE TABLE IF NOT EXISTS expense_attachments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_id    INTEGER NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  filename      TEXT    NOT NULL,            -- שם הקובץ המקורי כפי שהועלה
+  stored_path   TEXT    NOT NULL,
+  mime_type     TEXT    NOT NULL,
+  size_bytes    INTEGER NOT NULL,
+  uploaded_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_attachments ON expense_attachments(expense_id);
 
 -- ---------------------------------------------------------------------------
 -- תזכורות לחברים (תשתית ל-WhatsApp / SMS / Email, סעיף 23)

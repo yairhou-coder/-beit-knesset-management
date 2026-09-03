@@ -7,11 +7,16 @@
 
 import type { Db } from '../db/index.js';
 import { assertPositiveAgorot } from '../domain/money.js';
-import type { PaymentMethod, StandingOrderStatus } from '../domain/types.js';
+import {
+  STANDING_ORDER_STATUS_LABELS,
+  type PaymentMethod,
+  type StandingOrderStatus,
+} from '../domain/types.js';
 import { resolvePaymentProvider } from '../integrations/registry.js';
 import { raiseAlert } from './alerts.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { getOrganizationRow } from './organizations.js';
+import { getCommitmentRow } from './commitments.js';
 import { recordPayment, type RecordPaymentResult } from './payments.js';
 import { WhereBuilder, today } from './util.js';
 
@@ -20,6 +25,7 @@ export interface StandingOrderRow {
   member_id: number;
   organization_id: number;
   commitment_type_id: number | null;
+  commitment_id: number | null;
   amount_agorot: number;
   day_of_month: number;
   method: PaymentMethod;
@@ -41,6 +47,8 @@ export interface StandingOrderView {
   id: number;
   member: { id: number; name: string };
   organization: { id: number; name: string };
+  /** ההתחייבות שההוראה משלמת בתשלומים, אם קיימת. */
+  commitment: { id: number; amountAgorot: number; paidAgorot: number; balanceAgorot: number } | null;
   amountAgorot: number;
   dayOfMonth: number;
   method: PaymentMethod;
@@ -60,14 +68,19 @@ interface StandingOrderJoinedRow extends StandingOrderRow {
   member_first_name: string;
   member_last_name: string;
   organization_name: string;
+  commitment_amount: number | null;
+  commitment_paid: number;
 }
 
 const JOINED_SELECT = `
   SELECT s.*, m.first_name AS member_first_name, m.last_name AS member_last_name,
-         o.name AS organization_name
+         o.name AS organization_name,
+         c.amount_agorot AS commitment_amount,
+         COALESCE(c.paid_agorot, 0) AS commitment_paid
   FROM standing_orders s
   JOIN members m ON m.id = s.member_id
   JOIN organizations o ON o.id = s.organization_id
+  LEFT JOIN commitments c ON c.id = s.commitment_id
 `;
 
 function toView(row: StandingOrderJoinedRow): StandingOrderView {
@@ -78,6 +91,15 @@ function toView(row: StandingOrderJoinedRow): StandingOrderView {
       name: `${row.member_first_name} ${row.member_last_name}`.trim(),
     },
     organization: { id: row.organization_id, name: row.organization_name },
+    commitment:
+      row.commitment_id !== null && row.commitment_amount !== null
+        ? {
+            id: row.commitment_id,
+            amountAgorot: row.commitment_amount,
+            paidAgorot: row.commitment_paid,
+            balanceAgorot: row.commitment_amount - row.commitment_paid,
+          }
+        : null,
     amountAgorot: row.amount_agorot,
     dayOfMonth: row.day_of_month,
     method: row.method,
@@ -128,6 +150,8 @@ export interface StandingOrderInput {
   memberId: number;
   organizationId: number;
   commitmentTypeId?: number | null;
+  /** התחייבות שההוראה משלמת בתשלומים, למשל מקום/ריהוט. */
+  commitmentId?: number | null;
   amountAgorot: number;
   dayOfMonth?: number;
   method?: PaymentMethod;
@@ -142,17 +166,29 @@ export function createStandingOrder(db: Db, input: StandingOrderInput): Standing
   if (dayOfMonth < 1 || dayOfMonth > 28) {
     throw new ValidationError('יום החיוב חייב להיות בין 1 ל-28');
   }
+  // ההתחייבות המקושרת חייבת להיות של אותו חבר ואותה עמותה
+  if (input.commitmentId) {
+    const commitment = getCommitmentRow(db, input.commitmentId);
+    if (commitment.member_id !== input.memberId) {
+      throw new ValidationError('ההתחייבות שייכת לחבר אחר');
+    }
+    if (commitment.organization_id !== input.organizationId) {
+      throw new ValidationError('ההתחייבות שייכת לעמותה אחרת');
+    }
+  }
+
   const result = db
     .prepare(
       `INSERT INTO standing_orders
-         (member_id, organization_id, commitment_type_id, amount_agorot, day_of_month,
-          method, start_date, end_date, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (member_id, organization_id, commitment_type_id, commitment_id, amount_agorot,
+          day_of_month, method, start_date, end_date, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.memberId,
       input.organizationId,
       input.commitmentTypeId ?? null,
+      input.commitmentId ?? null,
       input.amountAgorot,
       dayOfMonth,
       input.method ?? 'credit_card',
@@ -227,7 +263,12 @@ export async function chargeStandingOrder(
 ): Promise<RecordPaymentResult> {
   const order = getStandingOrderRow(db, id);
   if (order.status !== 'active') {
-    throw new ValidationError(`לא ניתן לחייב הוראת קבע בסטטוס "${order.status}"`);
+    if (order.status === 'completed') {
+      throw new ValidationError('הוראת הקבע הסתיימה - ההתחייבות שולמה במלואה');
+    }
+    throw new ValidationError(
+      `לא ניתן לחייב הוראת קבע במצב "${STANDING_ORDER_STATUS_LABELS[order.status]}"`,
+    );
   }
 
   const org = getOrganizationRow(db, order.organization_id);
@@ -239,6 +280,23 @@ export async function chargeStandingOrder(
     | undefined;
   if (!member) throw new NotFoundError(`חבר ${order.member_id}`);
 
+  // הוראה שמשלמת התחייבות מחייבת רק עד גובה היתרה שנותרה, ולא מעבר לה.
+  let amountAgorot = order.amount_agorot;
+  if (order.commitment_id) {
+    const commitment = getCommitmentRow(db, order.commitment_id);
+    if (commitment.status === 'cancelled') {
+      throw new ValidationError('ההתחייבות המשויכת בוטלה');
+    }
+    if (commitment.balance_agorot <= 0) {
+      // ההתחייבות שולמה במלואה - אין עוד מה לחייב
+      db.prepare(
+        `UPDATE standing_orders SET status = 'completed', updated_at = datetime('now') WHERE id = ?`,
+      ).run(id);
+      throw new ValidationError('ההתחייבות שולמה במלואה, ההוראה הסתיימה');
+    }
+    amountAgorot = Math.min(amountAgorot, commitment.balance_agorot);
+  }
+
   const idempotencyKey = `standing-order-${id}-${period}`;
   let providerPaymentId: string | null = null;
   let failureReason: string | null = null;
@@ -247,7 +305,7 @@ export async function chargeStandingOrder(
   try {
     const charge = await provider.charge({
       idempotencyKey,
-      amountAgorot: order.amount_agorot,
+      amountAgorot,
       currency: 'ILS',
       description: `הוראת קבע ${period} - ${org.name}`,
       customer: {
@@ -269,7 +327,8 @@ export async function chargeStandingOrder(
     organizationId: order.organization_id,
     memberId: order.member_id,
     standingOrderId: id,
-    amountAgorot: order.amount_agorot,
+    commitmentId: order.commitment_id,
+    amountAgorot,
     paymentDate: options.paymentDate ?? today(),
     method: order.method,
     status: succeeded ? 'completed' : 'failed',
@@ -281,10 +340,13 @@ export async function chargeStandingOrder(
   });
 
   if (succeeded) {
+    // אם ההתחייבות סולקה בחיוב הזה, ההוראה מסתיימת מאליה
+    const settled =
+      order.commitment_id !== null && getCommitmentRow(db, order.commitment_id).balance_agorot <= 0;
     db.prepare(
       `UPDATE standing_orders SET last_charge_at = ?, last_failure_reason = NULL,
-         status = 'active', updated_at = datetime('now') WHERE id = ?`,
-    ).run(options.paymentDate ?? new Date().toISOString(), id);
+         status = ?, updated_at = datetime('now') WHERE id = ?`,
+    ).run(options.paymentDate ?? new Date().toISOString(), settled ? 'completed' : 'active', id);
   } else {
     db.prepare(
       `UPDATE standing_orders SET last_failure_reason = ?, status = 'failed',

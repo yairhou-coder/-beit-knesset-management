@@ -279,3 +279,33 @@ export interface NotificationProvider {
 
   send(message: NotificationMessage): Promise<NotificationResult>;
 }
+
+// ---------------------------------------------------------------------------
+// InvoiceExtractionProvider - חילוץ נתונים מחשבונית שהועלתה
+// ---------------------------------------------------------------------------
+
+export interface UploadedFile {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+}
+
+export interface ExtractedInvoice {
+  provider: string;
+  amountAgorot: Agorot | null;
+  invoiceNumber: string | null;
+  supplier: string | null;
+  date: string | null;
+  /** רמת הביטחון בהצעה. התוצאה תמיד טעונה אישור אנושי. */
+  confidence: 'none' | 'low' | 'medium' | 'high';
+  note: string;
+}
+
+export interface InvoiceExtractionProvider {
+  readonly key: string;
+  readonly displayName: string;
+  /** האם הספק יודע לקרוא חשבונית סרוקה (מצריך OCR). */
+  readonly supportsScannedImages: boolean;
+
+  extract(file: UploadedFile): Promise<ExtractedInvoice>;
+}
