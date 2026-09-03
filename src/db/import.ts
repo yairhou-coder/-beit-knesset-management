@@ -18,7 +18,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config } from '../config.js';
 import { openDatabase, type Db } from './index.js';
 import { shekelsToAgorot } from '../domain/money.js';
 import { createOrganization, listOrganizations } from '../services/organizations.js';
@@ -27,6 +26,7 @@ import { createEvent, listCommitmentTypes } from '../services/catalog.js';
 import { createCommitment } from '../services/commitments.js';
 import { recordPayment } from '../services/payments.js';
 import { chargeStandingOrder, createStandingOrder } from '../services/standingOrders.js';
+import { resetProviderCaches } from '../integrations/registry.js';
 
 interface ImportedMember {
   serial: number;
@@ -309,6 +309,43 @@ export async function importFromExcel(
   log(`  נוספו ${commitments} התחייבויות להמחשה ו-${examplePayments} תשלומים.`);
 }
 
+/**
+ * מרוקן את טבלאות הנתונים, בלי למחוק את קובץ בסיס הנתונים.
+ *
+ * מחיקת הקובץ עצמו נכשלת בחלונות כאשר המערכת פועלת ומחזיקה אותו פתוח.
+ * ריקון מבפנים עובד גם אז, ו-SQLite מאפשר גישה מכמה תהליכים במקביל -
+ * כך שאפשר לייבא בזמן שהמערכת רצה, ולראות את התוצאה ברענון הדפדפן.
+ *
+ * טבלאות העזר - סוגי ההתחייבות והגדרות המערכת - נשמרות.
+ */
+function clearAllData(db: Db): void {
+  const tables = [
+    'receipts',
+    'incomes',
+    'payments',
+    'commitments',
+    'standing_orders',
+    'expenses',
+    'notifications',
+    'admin_alerts',
+    'provider_webhook_events',
+    'events',
+    'members',
+    'organizations',
+  ];
+  db.pragma('foreign_keys = OFF');
+  db.transaction(() => {
+    for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
+    // איפוס המונים, כדי שהמזהים יתחילו מחדש מאחד
+    db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${tables.map(() => '?').join(',')})`).run(
+      ...tables,
+    );
+  })();
+  db.pragma('foreign_keys = ON');
+  // הגדרות ה-Integration של העמותות נמחקו יחד איתן
+  resetProviderCaches();
+}
+
 // --- הרצה מהשורה ------------------------------------------------------------
 
 const isMain = process.argv[1]?.endsWith('import.ts') || process.argv[1]?.endsWith('import.js');
@@ -317,14 +354,13 @@ if (isMain) {
   const reset = args.includes('--reset');
   const membersOnly = args.includes('--members-only');
 
+  const db = openDatabase();
+
   if (reset) {
-    for (const suffix of ['', '-wal', '-shm', '-journal']) {
-      fs.rmSync(`${config.databaseFile}${suffix}`, { force: true });
-    }
-    console.log('  בסיס הנתונים הקודם נמחק.');
+    clearAllData(db);
+    console.log('  הנתונים הקודמים נמחקו.');
   }
 
-  const db = openDatabase();
   const existing = listOrganizations(db).length > 0 && db.prepare('SELECT COUNT(*) AS c FROM members').get() as { c: number };
   if (existing && existing.c > 0 && !reset) {
     console.log('');
