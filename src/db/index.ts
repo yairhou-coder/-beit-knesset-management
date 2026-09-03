@@ -42,23 +42,79 @@ function migrate(db: Db): void {
   addColumn('expenses', 'notes', 'TEXT');
   addColumn('expenses', 'updated_at', 'TEXT');
 
+
   // ה-CHECK על סטטוס הוראת קבע נכתב לפני שנוסף הסטטוס "הושלמה". SQLite
-  // אינו מאפשר לשנות אילוץ קיים, ולכן הטבלה נבנית מחדש רק אם צריך.
+  // אינו מאפשר לשנות אילוץ קיים, ולכן הטבלה נבנית מחדש - זהו הדפוס התקני.
+  // עריכה ישירה של sqlite_master אינה אפשרית ואינה בטוחה.
   const standingOrdersSql = (
     db
       .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='standing_orders'")
       .get() as { sql: string } | undefined
   )?.sql;
   if (standingOrdersSql && !standingOrdersSql.includes("'completed'")) {
-    db.exec("PRAGMA writable_schema = ON");
-    db.prepare("UPDATE sqlite_master SET sql = ? WHERE type='table' AND name='standing_orders'").run(
-      standingOrdersSql.replace(
-        "'card_expired','failed')",
-        "'card_expired','failed','completed')",
-      ),
-    );
-    db.exec("PRAGMA writable_schema = OFF");
+    rebuildStandingOrders(db);
   }
+
+  // האינדקסים נוצרים כאן ולא ב-schema.sql: חלקם מצביעים על עמודות שנוספו
+  // זה עתה, ובבסיס נתונים קיים הם היו נכשלים בשלב הסכמה. הם נוצרים גם
+  // לאחר בנייה מחדש של הטבלה, שבה האינדקסים הישנים נמחקים יחד איתה.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_standing_orders_member     ON standing_orders(member_id);
+    CREATE INDEX IF NOT EXISTS idx_standing_orders_org        ON standing_orders(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_standing_orders_status     ON standing_orders(status);
+    CREATE INDEX IF NOT EXISTS idx_standing_orders_commitment ON standing_orders(commitment_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category_id);
+    CREATE INDEX IF NOT EXISTS idx_expenses_event    ON expenses(event_id);
+  `);
+}
+
+/**
+ * בונה מחדש את טבלת הוראות הקבע, כדי להרחיב את אילוץ הסטטוס.
+ * הנתונים מועתקים במלואם; האינדקסים נוצרים מחדש אצל הקורא.
+ */
+function rebuildStandingOrders(db: Db): void {
+  const columns = [
+    'id', 'member_id', 'organization_id', 'commitment_type_id', 'commitment_id',
+    'amount_agorot', 'day_of_month', 'method', 'status', 'start_date', 'end_date',
+    'provider', 'provider_subscription_id', 'card_last4', 'card_expiry',
+    'last_charge_at', 'last_failure_reason', 'notes', 'created_at', 'updated_at',
+  ].join(', ');
+
+  db.pragma('foreign_keys = OFF');
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE standing_orders_migrated (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        member_id          INTEGER NOT NULL REFERENCES members(id) ON DELETE RESTRICT,
+        organization_id    INTEGER NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+        commitment_type_id INTEGER REFERENCES commitment_types(id) ON DELETE SET NULL,
+        commitment_id      INTEGER REFERENCES commitments(id) ON DELETE SET NULL,
+        amount_agorot      INTEGER NOT NULL CHECK (amount_agorot > 0),
+        day_of_month       INTEGER NOT NULL DEFAULT 1 CHECK (day_of_month BETWEEN 1 AND 28),
+        method             TEXT    NOT NULL DEFAULT 'credit_card',
+        status             TEXT    NOT NULL DEFAULT 'active'
+                                   CHECK (status IN ('active','paused','cancelled',
+                                                     'card_expired','failed','completed')),
+        start_date         TEXT    NOT NULL,
+        end_date           TEXT,
+        provider           TEXT,
+        provider_subscription_id TEXT,
+        card_last4         TEXT,
+        card_expiry        TEXT,
+        last_charge_at     TEXT,
+        last_failure_reason TEXT,
+        notes              TEXT,
+        created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    db.exec(
+      `INSERT INTO standing_orders_migrated (${columns}) SELECT ${columns} FROM standing_orders;`,
+    );
+    db.exec('DROP TABLE standing_orders;');
+    db.exec('ALTER TABLE standing_orders_migrated RENAME TO standing_orders;');
+  })();
+  db.pragma('foreign_keys = ON');
 }
 
 /** נתוני יסוד שהמערכת אינה יכולה לתפקד בלעדיהם (סוגי התחייבות ברירת מחדל). */
