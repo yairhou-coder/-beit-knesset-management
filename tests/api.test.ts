@@ -141,4 +141,55 @@ describe('API', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/pdf');
   });
+
+  it('מקומות וריהוט: יצירה בתשלומים דרך ה-API', async () => {
+    const created = await call('POST', '/api/seats', {
+      memberId,
+      organizationId: orgId,
+      amountShekels: 20000,
+      paymentMode: 'standing_order',
+      instalmentsCount: 40,
+      firstPaymentDate: '2026-01-05',
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.commitment.instalmentAgorot).toBe(50_000);
+    expect(created.body.standingOrderId).not.toBeNull();
+
+    const list = await call('GET', '/api/seats');
+    expect(list.status).toBe(200);
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.summary.committedAgorot).toBe(2_000_000);
+    expect(list.body.summary.monthlyExpectedAgorot).toBe(50_000);
+
+    // ההוראה הזו אינה הו"ק שוטפת, ולכן אינה מופיעה במסך ההוראות השוטפות
+    const recurring = await call('GET', '/api/standing-orders?kind=recurring');
+    expect(recurring.body.items).toHaveLength(0);
+    const all = await call('GET', '/api/standing-orders');
+    expect(all.body.items).toHaveLength(1);
+  });
+
+  it('מקומות וריהוט: עדכון פריסה', async () => {
+    const seats = await call('GET', '/api/seats');
+    const id = seats.body.items[0].commitmentId;
+    const updated = await call('PATCH', `/api/seats/${id}`, { instalmentsCount: 25 });
+    expect(updated.status).toBe(200);
+    expect(updated.body.item.instalmentsCount).toBe(25);
+  });
+
+  it('תקציב: אומדן מול ביצוע', async () => {
+    const budget = await call('GET', '/api/expenses/budget');
+    expect(budget.status).toBe(200);
+    expect(budget.body.plannedMonthlyAgorot).toBeGreaterThan(0);
+
+    const categories = await call('GET', '/api/expenses/categories');
+    const cleaning = categories.body.items.find((row: any) => row.key === 'cleaning');
+    expect(cleaning.plannedAmountAgorot).toBe(350_000);
+
+    const patched = await call('PATCH', `/api/expenses/categories/${cleaning.id}`, {
+      plannedShekels: 4000,
+      plannedPeriod: 'monthly',
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.category.plannedAmountAgorot).toBe(400_000);
+  });
 });

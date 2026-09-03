@@ -33,6 +33,9 @@ export function createStandingOrdersRouter(db: Db): Router {
         ...(optionalString(req.query['status'])
           ? { status: optionalString(req.query['status']) as StandingOrderStatus }
           : {}),
+        // ברירת המחדל היא הו"ק שוטפת בלבד. הוראות שמשלמות התחייבות
+        // (מקום/ריהוט) מוצגות במסך שלהן, ולא מעורבבות כאן.
+        kind: (optionalString(req.query['kind']) as 'recurring' | 'commitment' | 'all') ?? 'all',
       }),
     });
   });
@@ -48,6 +51,7 @@ export function createStandingOrdersRouter(db: Db): Router {
         memberId: intParam(input['memberId'], 'memberId'),
         organizationId: intParam(input['organizationId'], 'organizationId'),
         commitmentTypeId: optionalInt(input['commitmentTypeId']) ?? null,
+        commitmentId: optionalInt(input['commitmentId']) ?? null,
         amountAgorot: readAmountAgorot(input, 'סכום הוראת הקבע'),
         ...(optionalInt(input['dayOfMonth']) !== undefined
           ? { dayOfMonth: optionalInt(input['dayOfMonth'])! }

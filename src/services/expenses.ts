@@ -28,6 +28,16 @@ export const EXPENSE_KIND_LABELS: Record<ExpenseKind, string> = {
 // קטגוריות
 // ---------------------------------------------------------------------------
 
+/** תדירות ההוצאה המתוכננת. */
+export const PLANNED_PERIODS = ['monthly', 'yearly', 'occasional'] as const;
+export type PlannedPeriod = (typeof PLANNED_PERIODS)[number];
+
+export const PLANNED_PERIOD_LABELS: Record<PlannedPeriod, string> = {
+  monthly: 'חודשי',
+  yearly: 'שנתי',
+  occasional: 'לפי הצורך',
+};
+
 export interface ExpenseCategoryView {
   id: number;
   key: string;
@@ -35,6 +45,11 @@ export interface ExpenseCategoryView {
   kind: ExpenseKind;
   kindLabel: string;
   active: boolean;
+  /** אומדן ההוצאה לקטגוריה, כפי שנמסר. אינו הוצאה בפועל. */
+  plannedAmountAgorot: number | null;
+  plannedPeriod: PlannedPeriod | null;
+  plannedPeriodLabel: string | null;
+  plannedNote: string | null;
 }
 
 interface ExpenseCategoryRow {
@@ -44,6 +59,9 @@ interface ExpenseCategoryRow {
   kind: ExpenseKind;
   active: number;
   sort_order: number;
+  planned_amount_agorot: number | null;
+  planned_period: PlannedPeriod | null;
+  planned_note: string | null;
 }
 
 function toCategoryView(row: ExpenseCategoryRow): ExpenseCategoryView {
@@ -54,6 +72,12 @@ function toCategoryView(row: ExpenseCategoryRow): ExpenseCategoryView {
     kind: row.kind,
     kindLabel: EXPENSE_KIND_LABELS[row.kind] ?? row.kind,
     active: row.active === 1,
+    plannedAmountAgorot: row.planned_amount_agorot,
+    plannedPeriod: row.planned_period,
+    plannedPeriodLabel: row.planned_period
+      ? (PLANNED_PERIOD_LABELS[row.planned_period] ?? row.planned_period)
+      : null,
+    plannedNote: row.planned_note,
   };
 }
 
@@ -67,25 +91,94 @@ export function listExpenseCategories(db: Db, includeInactive = false): ExpenseC
   return rows.map(toCategoryView);
 }
 
-export function createExpenseCategory(
-  db: Db,
-  input: { key?: string; name: string; kind?: ExpenseKind; sortOrder?: number },
-): ExpenseCategoryView {
+export interface ExpenseCategoryInput {
+  key?: string;
+  name: string;
+  kind?: ExpenseKind;
+  sortOrder?: number;
+  plannedAmountAgorot?: number | null;
+  plannedPeriod?: PlannedPeriod | null;
+  plannedNote?: string | null;
+}
+
+export function createExpenseCategory(db: Db, input: ExpenseCategoryInput): ExpenseCategoryView {
   if (!input.name?.trim()) throw new ValidationError('שם הקטגוריה הוא שדה חובה');
   const kind = input.kind ?? 'ongoing';
   if (!EXPENSE_KINDS.includes(kind)) throw new ValidationError(`אופי הוצאה לא מוכר: ${kind}`);
+  assertPlannedPeriod(input.plannedPeriod);
 
   // מפתח נגזר מהשם כאשר לא סופק, כדי שהוספה מהממשק לא תדרוש מפתח טכני
   const key = input.key?.trim() || `cat_${Date.now().toString(36)}`;
   const result = db
     .prepare(
-      `INSERT INTO expense_categories (key, name, kind, sort_order) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO expense_categories
+         (key, name, kind, sort_order, planned_amount_agorot, planned_period, planned_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(key, input.name.trim(), kind, input.sortOrder ?? 500);
+    .run(
+      key,
+      input.name.trim(),
+      kind,
+      input.sortOrder ?? 500,
+      input.plannedAmountAgorot ?? null,
+      input.plannedPeriod ?? null,
+      input.plannedNote ?? null,
+    );
   const row = db
     .prepare('SELECT * FROM expense_categories WHERE id = ?')
     .get(Number(result.lastInsertRowid)) as ExpenseCategoryRow;
   return toCategoryView(row);
+}
+
+function assertPlannedPeriod(period: PlannedPeriod | null | undefined): void {
+  if (period && !PLANNED_PERIODS.includes(period)) {
+    throw new ValidationError(`תדירות לא מוכרת: ${period}`);
+  }
+}
+
+/**
+ * עדכון האומדן התקציבי של קטגוריה.
+ *
+ * האומדן הוא הערכה בלבד ואינו נרשם כהוצאה. שינוי שלו אינו נוגע
+ * לאף הוצאה שכבר נרשמה.
+ */
+export function updateExpenseCategoryBudget(
+  db: Db,
+  id: number,
+  patch: {
+    plannedAmountAgorot?: number | null;
+    plannedPeriod?: PlannedPeriod | null;
+    plannedNote?: string | null;
+  },
+): ExpenseCategoryView {
+  getCategoryRow(db, id);
+  assertPlannedPeriod(patch.plannedPeriod);
+  if (
+    patch.plannedAmountAgorot !== undefined &&
+    patch.plannedAmountAgorot !== null &&
+    (!Number.isInteger(patch.plannedAmountAgorot) || patch.plannedAmountAgorot < 0)
+  ) {
+    throw new ValidationError('האומדן חייב להיות סכום שאינו שלילי');
+  }
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.plannedAmountAgorot !== undefined) {
+    sets.push('planned_amount_agorot = ?');
+    values.push(patch.plannedAmountAgorot);
+  }
+  if (patch.plannedPeriod !== undefined) {
+    sets.push('planned_period = ?');
+    values.push(patch.plannedPeriod);
+  }
+  if (patch.plannedNote !== undefined) {
+    sets.push('planned_note = ?');
+    values.push(patch.plannedNote);
+  }
+  if (sets.length > 0) {
+    db.prepare(`UPDATE expense_categories SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+  return toCategoryView(getCategoryRow(db, id));
 }
 
 function getCategoryRow(db: Db, id: number): ExpenseCategoryRow {
@@ -459,5 +552,127 @@ export function getExpenseSummary(db: Db, filters: ExpenseFilters = {}): Expense
     byEvent: withShare(byEvent, totals.amount),
     byMonth,
     missingInvoice: { count: missing.count, amountAgorot: missing.amount },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// תקציב - אומדן מול הוצאה בפועל
+// ---------------------------------------------------------------------------
+
+/**
+ * שורת תקציב אחת: מה תוכנן, ומה יצא בפועל.
+ *
+ * האומדן והביצוע מיושרים לאותה יחידה - חודש - כדי שיהיה אפשר להשוות
+ * ביניהם. הוצאה שנתית מחולקת ב-12, וההוצאה בפועל מחושבת כממוצע חודשי
+ * על פני החודשים שנמדדו. זהו קירוב, וכך הוא מוצג.
+ */
+export interface BudgetLine {
+  categoryId: number;
+  name: string;
+  kind: ExpenseKind;
+  kindLabel: string;
+  plannedAmountAgorot: number | null;
+  plannedPeriod: PlannedPeriod | null;
+  plannedPeriodLabel: string | null;
+  plannedNote: string | null;
+  /** האומדן בשקלול חודשי - הבסיס להשוואה. */
+  plannedMonthlyAgorot: number | null;
+  plannedYearlyAgorot: number | null;
+  /** ההוצאה בפועל בטווח שנמדד, והממוצע החודשי שלה. */
+  actualAgorot: number;
+  actualMonthlyAgorot: number;
+  expenseCount: number;
+}
+
+export interface BudgetReport {
+  /** מספר החודשים שנכללו בחישוב ההוצאה בפועל. */
+  monthsMeasured: number;
+  lines: BudgetLine[];
+  plannedMonthlyAgorot: number;
+  plannedYearlyAgorot: number;
+  actualMonthlyAgorot: number;
+  /** כמה קטגוריות עדיין ללא אומדן - כדי שיהיה ברור מה חסר. */
+  withoutPlanCount: number;
+}
+
+/**
+ * מייצר את דוח התקציב.
+ *
+ * `months` קובע על פני כמה חודשים אחרונים נמדדת ההוצאה בפועל.
+ * ברירת המחדל היא 12 חודשים, כדי שהוצאות עונתיות - חגים למשל -
+ * ייכללו בממוצע ולא יעוותו אותו.
+ */
+export function getBudgetReport(
+  db: Db,
+  options: { organizationId?: number; months?: number } = {},
+): BudgetReport {
+  const months = Math.max(1, options.months ?? 12);
+
+  const since = new Date();
+  since.setUTCMonth(since.getUTCMonth() - (months - 1), 1);
+  const fromDate = since.toISOString().slice(0, 10);
+
+  const where = new WhereBuilder();
+  where.add('e.expense_date >= ?', fromDate);
+  where.addIf(options.organizationId, 'e.organization_id = ?', options.organizationId);
+
+  const actuals = db
+    .prepare(
+      `SELECT e.category_id AS id,
+              COALESCE(SUM(e.amount_agorot), 0) AS amount,
+              COUNT(*) AS count
+         FROM expenses e ${where.sql}
+        GROUP BY e.category_id`,
+    )
+    .all(...where.values) as Array<{ id: number | null; amount: number; count: number }>;
+  const actualByCategory = new Map(actuals.map((row) => [row.id, row]));
+
+  const categories = db
+    .prepare('SELECT * FROM expense_categories WHERE active = 1 ORDER BY sort_order, name')
+    .all() as ExpenseCategoryRow[];
+
+  const lines: BudgetLine[] = categories.map((row) => {
+    const actual = actualByCategory.get(row.id);
+    const actualAgorot = actual?.amount ?? 0;
+
+    // אומדן "לפי הצורך" אינו ניתן לפריסה חודשית, ולכן הוא נשאר ריק.
+    const plannedMonthlyAgorot =
+      row.planned_amount_agorot === null
+        ? null
+        : row.planned_period === 'monthly'
+          ? row.planned_amount_agorot
+          : row.planned_period === 'yearly'
+            ? Math.round(row.planned_amount_agorot / 12)
+            : null;
+
+    return {
+      categoryId: row.id,
+      name: row.name,
+      kind: row.kind,
+      kindLabel: EXPENSE_KIND_LABELS[row.kind] ?? row.kind,
+      plannedAmountAgorot: row.planned_amount_agorot,
+      plannedPeriod: row.planned_period,
+      plannedPeriodLabel: row.planned_period
+        ? (PLANNED_PERIOD_LABELS[row.planned_period] ?? row.planned_period)
+        : null,
+      plannedNote: row.planned_note,
+      plannedMonthlyAgorot,
+      plannedYearlyAgorot: plannedMonthlyAgorot === null ? null : plannedMonthlyAgorot * 12,
+      actualAgorot,
+      actualMonthlyAgorot: Math.round(actualAgorot / months),
+      expenseCount: actual?.count ?? 0,
+    };
+  });
+
+  const sum = (pick: (line: BudgetLine) => number | null): number =>
+    lines.reduce((total, line) => total + (pick(line) ?? 0), 0);
+
+  return {
+    monthsMeasured: months,
+    lines,
+    plannedMonthlyAgorot: sum((line) => line.plannedMonthlyAgorot),
+    plannedYearlyAgorot: sum((line) => line.plannedYearlyAgorot),
+    actualMonthlyAgorot: sum((line) => line.actualMonthlyAgorot),
+    withoutPlanCount: lines.filter((line) => line.plannedAmountAgorot === null).length,
   };
 }

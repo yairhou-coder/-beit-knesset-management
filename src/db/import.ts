@@ -172,6 +172,12 @@ export async function importFromExcel(
       notes: `מקום/ריהוט · ${source.seats} מקומות · ${SEAT_INSTALMENTS} תשלומים של ${source.seatDuesShekels} ₪`,
     });
 
+    // פריסת התשלומים נשמרת על ההתחייבות עצמה, כדי שמסך המקומות יציג
+    // כמה תשלומים סוכמו ומתי התחיל התשלום הראשון.
+    db.prepare(
+      'UPDATE commitments SET instalments_count = ?, first_payment_date = ? WHERE id = ?',
+    ).run(SEAT_INSTALMENTS, startDate, seatCommitment.id);
+
     const seat = createStandingOrder(db, {
       memberId: member.id,
       organizationId: synagogue.id,
@@ -331,14 +337,17 @@ export async function importFromExcel(
   const categoryId = (key: string): number =>
     (db.prepare('SELECT id FROM expense_categories WHERE key = ?').get(key) as { id: number }).id;
 
+  // הסכומים תואמים את רישום ההוצאות של הגבאי, כדי שמסך התקציב יציג
+  // מהתחלה השוואה שנראית כמו המציאות ולא מספרים שרירותיים.
   const monthlyExpenses: Array<{ key: string; supplier: string; amount: number; day: number }> = [
-    { key: 'rabbi_salary', supplier: 'הרב', amount: 8000, day: 1 },
-    { key: 'gabai_salary', supplier: 'גבאי', amount: 2500, day: 1 },
-    { key: 'cleaning', supplier: 'שירותי ניקיון', amount: 1800, day: 5 },
+    { key: 'rabbi_salary', supplier: 'הרב', amount: 3000, day: 1 },
+    { key: 'cleaning', supplier: 'שירותי ניקיון', amount: 3500, day: 5 },
+    { key: 'loan_repayment', supplier: 'החזר הלוואה', amount: 4000, day: 10 },
     { key: 'electricity', supplier: 'חברת החשמל', amount: 1450, day: 12 },
     { key: 'water', supplier: 'תאגיד המים', amount: 320, day: 12 },
   ];
-  const weeklyKiddush = { key: 'kiddush', supplier: 'מכולת השכונה', amounts: [520, 640, 700, 880] };
+  // כ-11,500 ₪ קידושים בחודש, בפריסה שבועית
+  const weeklyKiddush = { key: 'kiddush', supplier: 'מכולת השכונה', amounts: [2400, 2800, 3000, 3300] };
 
   const insertExpense = db.prepare(
     `INSERT INTO expenses

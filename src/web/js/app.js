@@ -31,6 +31,8 @@ import {
 import { bindOrganizations, renderOrganizations } from './pages/organizations.js';
 import { renderAbout } from './pages/about.js';
 import { bindExpenses, openExpenseModal, renderExpenses } from './pages/expenses.js';
+import { bindSeats, openSeatModal, renderSeats } from './pages/seats.js';
+import { bindBudget, renderBudget } from './pages/budget.js';
 import { openCommitmentModal, openPaymentModal } from './pages/paymentForm.js';
 
 const view = document.getElementById('view');
@@ -44,9 +46,11 @@ const TITLES = {
   payments: 'תשלומים',
   incomes: 'הכנסות',
   expenses: 'הוצאות',
+  budget: 'תקציב שנתי',
   receipts: 'קבלות ומסמכים',
   members: 'חברי קהילה',
-  'standing-orders': 'הוראות קבע',
+  'standing-orders': 'הוראות קבע שוטפות',
+  seats: 'מקומות וריהוט',
   reports: 'דוחות',
   organizations: 'עמותות',
   notifications: 'תזכורות',
@@ -77,6 +81,9 @@ function pageActions(route, reload) {
       break;
     case 'expenses':
       add('הוצאה חדשה', 'primary', () => void openExpenseModal({ onDone: reload }));
+      break;
+    case 'seats':
+      add('התחייבות מקום/ריהוט', 'primary', () => openSeatModal({ onDone: reload }));
       break;
     case 'members':
       if (route.segments.length === 1) {
@@ -165,6 +172,8 @@ async function bootstrap() {
   register('receipts', page(renderReceipts, bindReceipts));
   register('members', membersPage);
   register('standing-orders', page(renderStandingOrders, bindStandingOrders));
+  register('seats', page(renderSeats, bindSeats));
+  register('budget', page(renderBudget, bindBudget));
   register('reports', page(renderReports));
   register('organizations', page(renderOrganizations, bindOrganizations));
   register('notifications', page(renderNotifications, bindNotifications));

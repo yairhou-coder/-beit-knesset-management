@@ -19,6 +19,8 @@ import {
   RECEIPT_STATUS_LABELS,
   STANDING_ORDER_STATUS_LABELS,
 } from '../domain/types.js';
+import { EXPENSE_KIND_LABELS, PLANNED_PERIOD_LABELS } from '../services/expenses.js';
+import { SEAT_PAYMENT_MODE_LABELS } from '../services/seats.js';
 import { body, optionalInt, optionalString } from './helpers.js';
 
 export function createCatalogRouter(db: Db): Router {
@@ -37,6 +39,9 @@ export function createCatalogRouter(db: Db): Router {
       eventKinds: EVENT_KIND_LABELS,
       notificationChannels: NOTIFICATION_CHANNEL_LABELS,
       standingOrderStatuses: STANDING_ORDER_STATUS_LABELS,
+      expenseKinds: EXPENSE_KIND_LABELS,
+      plannedPeriods: PLANNED_PERIOD_LABELS,
+      seatPaymentModes: SEAT_PAYMENT_MODE_LABELS,
     });
   });
 

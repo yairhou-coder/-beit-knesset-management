@@ -109,6 +109,13 @@ CREATE TABLE IF NOT EXISTS commitments (
   planned_payment_method TEXT   CHECK (planned_payment_method IN
                                 ('cash','check','bank_transfer','credit_card',
                                  'standing_order','bit','paybox','other')),
+
+  -- פריסת תשלומים. רלוונטי בעיקר להתחייבות מקום/ריהוט: כמה תשלומים
+  -- סוכמו, ומתי נגבה (או ייגבה) התשלום הראשון. שני השדות אינם חובה -
+  -- מי ששילם הכל מראש פשוט לא ממלא אותם.
+  instalments_count     INTEGER CHECK (instalments_count IS NULL OR instalments_count > 0),
+  first_payment_date    TEXT,
+
   notes                 TEXT,
   cancelled_at          TEXT,
   cancel_reason         TEXT,
@@ -310,7 +317,15 @@ CREATE TABLE IF NOT EXISTS expense_categories (
   kind       TEXT    NOT NULL DEFAULT 'ongoing'
                      CHECK (kind IN ('salary','ongoing','events','maintenance','other')),
   active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
-  sort_order INTEGER NOT NULL DEFAULT 0
+  sort_order INTEGER NOT NULL DEFAULT 0,
+
+  -- תקציב מתוכנן לקטגוריה: אומדן ההוצאה ותדירותה. משמש למסך התקציב,
+  -- שמשווה את האומדן להוצאה בפועל. אינו חובה - קטגוריה ללא אומדן
+  -- פשוט לא מופיעה בתחזית.
+  planned_amount_agorot INTEGER CHECK (planned_amount_agorot IS NULL OR planned_amount_agorot >= 0),
+  planned_period        TEXT    CHECK (planned_period IS NULL OR
+                                       planned_period IN ('monthly','yearly','occasional')),
+  planned_note          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS expenses (

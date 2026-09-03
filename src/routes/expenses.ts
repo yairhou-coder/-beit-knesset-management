@@ -4,13 +4,16 @@ import {
   createExpense,
   createExpenseCategory,
   deleteExpense,
+  getBudgetReport,
   getExpense,
   getExpenseSummary,
   listExpenseCategories,
   listExpenses,
   updateExpense,
+  updateExpenseCategoryBudget,
   type ExpenseFilters,
   type ExpenseKind,
+  type PlannedPeriod,
 } from '../services/expenses.js';
 import {
   attachToExpense,
@@ -67,8 +70,57 @@ export function createExpensesRouter(db: Db): Router {
       category: createExpenseCategory(db, {
         name: String(input['name'] ?? ''),
         ...(optionalString(input['kind']) ? { kind: optionalString(input['kind']) as ExpenseKind } : {}),
+        plannedAmountAgorot:
+          input['plannedAmountAgorot'] !== undefined || input['plannedShekels'] !== undefined
+            ? readAmountAgorot(
+                {
+                  amountAgorot: input['plannedAmountAgorot'],
+                  amountShekels: input['plannedShekels'],
+                },
+                'אומדן ההוצאה',
+              )
+            : null,
+        plannedPeriod: (optionalString(input['plannedPeriod']) as PlannedPeriod) ?? null,
+        plannedNote: optionalString(input['plannedNote']) ?? null,
       }),
     });
+  });
+
+  /** עדכון האומדן התקציבי של קטגוריה. אינו נוגע להוצאות שנרשמו. */
+  router.patch('/categories/:id', (req, res) => {
+    const input = body(req);
+    const patch: Parameters<typeof updateExpenseCategoryBudget>[2] = {};
+    if (input['plannedAmountAgorot'] !== undefined || input['plannedShekels'] !== undefined) {
+      const raw = input['plannedAmountAgorot'] ?? input['plannedShekels'];
+      patch.plannedAmountAgorot =
+        raw === null || raw === ''
+          ? null
+          : readAmountAgorot(
+              { amountAgorot: input['plannedAmountAgorot'], amountShekels: input['plannedShekels'] },
+              'אומדן ההוצאה',
+            );
+    }
+    if (input['plannedPeriod'] !== undefined) {
+      patch.plannedPeriod = (optionalString(input['plannedPeriod']) as PlannedPeriod) ?? null;
+    }
+    if (input['plannedNote'] !== undefined) {
+      patch.plannedNote = optionalString(input['plannedNote']) ?? null;
+    }
+    res.json({
+      category: updateExpenseCategoryBudget(db, intParam(req.params['id'], 'id'), patch),
+    });
+  });
+
+  /** דוח תקציב: אומדן מול הוצאה בפועל. */
+  router.get('/budget', (req, res) => {
+    res.json(
+      getBudgetReport(db, {
+        ...(optionalInt(req.query['organizationId'])
+          ? { organizationId: optionalInt(req.query['organizationId'])! }
+          : {}),
+        ...(optionalInt(req.query['months']) ? { months: optionalInt(req.query['months'])! } : {}),
+      }),
+    );
   });
 
   /** מידע על ספק חילוץ החשבוניות, כדי שהממשק יידע מה להציג. */

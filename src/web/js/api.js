@@ -62,6 +62,8 @@ export const api = {
 
   expenses: (params) => request('GET', `/expenses${qs(params)}`),
   expenseCategories: () => request('GET', '/expenses/categories'),
+  budget: (params) => request('GET', `/expenses/budget${qs(params)}`),
+  updateCategoryBudget: (id, body) => request('PATCH', `/expenses/categories/${id}`, body),
   createExpense: (body) => request('POST', '/expenses', body),
   updateExpense: (id, body) => request('PATCH', `/expenses/${id}`, body),
   deleteExpense: (id) => request('DELETE', `/expenses/${id}`),
@@ -83,6 +85,10 @@ export const api = {
 
   standingOrders: (params) => request('GET', `/standing-orders${qs(params)}`),
   chargeStandingOrder: (id) => request('POST', `/standing-orders/${id}/charge`),
+
+  seats: (params) => request('GET', `/seats${qs(params)}`),
+  createSeatCommitment: (body) => request('POST', '/seats', body),
+  updateSeatPlan: (id, body) => request('PATCH', `/seats/${id}`, body),
 
   notifications: (params) => request('GET', `/notifications${qs(params)}`),
   sendDebtReminder: (body) => request('POST', '/notifications/debt-reminder', body),

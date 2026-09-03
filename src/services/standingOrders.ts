@@ -116,14 +116,29 @@ function toView(row: StandingOrderJoinedRow): StandingOrderView {
   };
 }
 
+/**
+ * `kind` מפריד בין שני דברים שונים לחלוטין:
+ *   recurring  - הו"ק שוטפת, חיוב חודשי קבוע ללא סכום סופי (דמי חבר).
+ *   commitment - הוראה שמשלמת התחייבות בתשלומים (מקום/ריהוט), ולכן יש
+ *                לה סכום כולל ויתרה. אלה מוצגות במסך "מקומות וריהוט".
+ */
+export interface StandingOrderFilters {
+  memberId?: number;
+  organizationId?: number;
+  status?: StandingOrderStatus;
+  kind?: 'recurring' | 'commitment' | 'all';
+}
+
 export function listStandingOrders(
   db: Db,
-  filters: { memberId?: number; organizationId?: number; status?: StandingOrderStatus } = {},
+  filters: StandingOrderFilters = {},
 ): StandingOrderView[] {
   const where = new WhereBuilder();
   where.addIf(filters.memberId, 's.member_id = ?', filters.memberId);
   where.addIf(filters.organizationId, 's.organization_id = ?', filters.organizationId);
   where.addIf(filters.status, 's.status = ?', filters.status);
+  if (filters.kind === 'recurring') where.add('s.commitment_id IS NULL');
+  else if (filters.kind === 'commitment') where.add('s.commitment_id IS NOT NULL');
   const rows = db
     .prepare(`${JOINED_SELECT} ${where.sql} ORDER BY s.status, m.last_name`)
     .all(...where.values) as StandingOrderJoinedRow[];

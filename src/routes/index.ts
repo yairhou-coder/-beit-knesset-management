@@ -11,6 +11,7 @@ import { createNotificationsRouter } from './notifications.js';
 import { createOrganizationsRouter } from './organizations.js';
 import { createPaymentsRouter } from './payments.js';
 import { createReceiptsRouter } from './receipts.js';
+import { createSeatsRouter } from './seats.js';
 import { createStandingOrdersRouter } from './standingOrders.js';
 
 export function createApiRouter(db: Db): Router {
@@ -30,6 +31,7 @@ export function createApiRouter(db: Db): Router {
   router.use('/members', createMembersRouter(db));
   router.use('/organizations', createOrganizationsRouter(db));
   router.use('/standing-orders', createStandingOrdersRouter(db));
+  router.use('/seats', createSeatsRouter(db));
   router.use('/notifications', createNotificationsRouter(db));
   router.use('/', createCatalogRouter(db));
 

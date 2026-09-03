@@ -1,4 +1,4 @@
-/** מסכי רשימה: התחייבויות, תשלומים, הכנסות, הוראות קבע, תזכורות, התראות. */
+/** מסכי רשימה: התחייבויות, תשלומים, הכנסות, הוראות קבע שוטפות, תזכורות, התראות. */
 
 import { api } from '../api.js';
 import { badge, date, dateTime, days, esc, money, number, toneFor } from '../format.js';
@@ -221,14 +221,41 @@ export async function renderIncomes(route) {
 
 // --- הוראות קבע ------------------------------------------------------------
 
+/**
+ * המסך מציג הוראות קבע **שוטפות** בלבד - חיוב חודשי קבוע ללא סכום סופי.
+ * הוראות שמשלמות התחייבות למקום/ריהוט הן דבר אחר לגמרי, יש להן סכום
+ * כולל ויתרה, והן מוצגות במסך "מקומות וריהוט".
+ */
 export async function renderStandingOrders() {
-  const data = await api.standingOrders(withOrg());
+  const data = await api.standingOrders(withOrg({ kind: 'recurring' }));
+  const active = data.items.filter((row) => row.status === 'active');
+  const monthlyAgorot = active.reduce((sum, row) => sum + row.amountAgorot, 0);
+
+  const cards = `
+    <div class="card-grid" style="margin:0">
+      ${statCard({
+        title: 'גבייה חודשית שוטפת',
+        amountAgorot: monthlyAgorot,
+        tone: 'positive',
+        hint: `${number(active.length)} הוראות פעילות`,
+        link: '#/standing-orders',
+      })}
+      ${statCard({
+        title: 'הוראות שאינן פעילות',
+        count: data.items.length - active.length,
+        tone: data.items.length - active.length > 0 ? 'warning' : 'neutral',
+        hint: 'מושהות, שנכשלו או שבוטלו',
+        link: '#/standing-orders',
+      })}
+    </div>`;
+
   const rows = table(
     [
       { header: 'חבר', cell: (row) => `<a href="#/members/${row.member.id}">${esc(row.member.name)}</a>` },
       { header: 'עמותה', cell: (row) => esc(row.organization.name) },
-      { header: 'סכום', className: 'num', cell: (row) => money(row.amountAgorot) },
+      { header: 'סכום חודשי', className: 'num', cell: (row) => money(row.amountAgorot) },
       { header: 'יום חיוב', className: 'num', cell: (row) => number(row.dayOfMonth) },
+      { header: 'תחילת ההוראה', cell: (row) => date(row.startDate) },
       { header: 'סטטוס', cell: (row) => badge(label('standingOrderStatuses', row.status), toneFor('standingOrder', row.status)) },
       { header: 'כרטיס', cell: (row) => (row.cardLast4 ? `****${esc(row.cardLast4)} · ${esc(row.cardExpiry ?? '')}` : '—') },
       { header: 'חיוב אחרון', cell: (row) => dateTime(row.lastChargeAt) },
@@ -241,9 +268,16 @@ export async function renderStandingOrders() {
       },
     ],
     data.items,
-    'אין הוראות קבע',
+    'אין הוראות קבע שוטפות',
   );
-  return section('הוראות קבע', rows, { flush: true });
+
+  return `
+    ${section('סיכום', cards)}
+    ${section('הוראות קבע שוטפות', rows, { hint: `${number(data.items.length)} רשומות`, flush: true })}
+    <p class="small muted" style="padding:0 4px">
+      כאן רק החיוב החודשי הקבוע. תשלומי מקום וריהוט הם התחייבות נפרדת עם סכום כולל ויתרה,
+      והם מנוהלים במסך <a href="#/seats">מקומות וריהוט</a>.
+    </p>`;
 }
 
 export function bindStandingOrders(root, reload) {

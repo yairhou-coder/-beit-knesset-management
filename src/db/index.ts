@@ -42,6 +42,15 @@ function migrate(db: Db): void {
   addColumn('expenses', 'notes', 'TEXT');
   addColumn('expenses', 'updated_at', 'TEXT');
 
+  // פריסת תשלומים על התחייבות (מקום/ריהוט)
+  addColumn('commitments', 'instalments_count', 'INTEGER');
+  addColumn('commitments', 'first_payment_date', 'TEXT');
+
+  // תקציב מתוכנן לקטגוריית הוצאה
+  addColumn('expense_categories', 'planned_amount_agorot', 'INTEGER');
+  addColumn('expense_categories', 'planned_period', 'TEXT');
+  addColumn('expense_categories', 'planned_note', 'TEXT');
+
 
   // ה-CHECK על סטטוס הוראת קבע נכתב לפני שנוסף הסטטוס "הושלמה". SQLite
   // אינו מאפשר לשנות אילוץ קיים, ולכן הטבלה נבנית מחדש - זהו הדפוס התקני.
@@ -137,36 +146,116 @@ function seedReferenceData(db: Db): void {
   const tx = db.transaction(() => defaults.forEach((row) => insert.run(row)));
   tx();
 
-  // קטגוריות הוצאה, מקובצות לפי אופי ההוצאה
+  // קטגוריות הוצאה, מקובצות לפי אופי ההוצאה.
+  //
+  // האומדנים (planned) נלקחו מרישום ההוצאות של הגבאי. הם אומדנים בלבד -
+  // המספרים נמסרו כטווח או בעיגול - ולכן הם משמשים למסך התקציב בלבד
+  // ולעולם אינם נרשמים כהוצאה בפועל. כל הוצאה אמיתית נרשמת בנפרד.
   const insertCategory = db.prepare(`
-    INSERT INTO expense_categories (key, name, kind, sort_order)
-    VALUES (@key, @name, @kind, @sort_order)
+    INSERT INTO expense_categories
+      (key, name, kind, sort_order, planned_amount_agorot, planned_period, planned_note)
+    VALUES (@key, @name, @kind, @sort_order, @planned, @period, @note)
     ON CONFLICT(key) DO NOTHING
   `);
-  const categories = [
-    { key: 'rabbi_salary', name: 'משכורת הרב', kind: 'salary', sort_order: 10 },
-    { key: 'gabai_salary', name: 'משכורת גבאי', kind: 'salary', sort_order: 20 },
-    { key: 'staff_salary', name: 'שכר עובדים', kind: 'salary', sort_order: 30 },
 
-    { key: 'kiddush', name: 'קידושים', kind: 'ongoing', sort_order: 110 },
-    { key: 'cleaning', name: 'ניקיון', kind: 'ongoing', sort_order: 120 },
-    { key: 'electricity', name: 'חשמל', kind: 'ongoing', sort_order: 130 },
-    { key: 'water', name: 'מים', kind: 'ongoing', sort_order: 140 },
-    { key: 'municipal_tax', name: 'ארנונה', kind: 'ongoing', sort_order: 150 },
-    { key: 'insurance', name: 'ביטוח', kind: 'ongoing', sort_order: 160 },
-    { key: 'supplies', name: 'ציוד ומתכלים', kind: 'ongoing', sort_order: 170 },
-    { key: 'books', name: 'ספרים ותשמישי קדושה', kind: 'ongoing', sort_order: 180 },
+  /** ₪ לאגורות, ו-null נשאר null (קטגוריה ללא אומדן). */
+  const plan = (shekels: number | null): number | null =>
+    shekels === null ? null : Math.round(shekels * 100);
 
-    { key: 'holidays', name: 'חגים', kind: 'events', sort_order: 210 },
-    { key: 'special_events', name: 'אירועים מיוחדים', kind: 'events', sort_order: 220 },
-    { key: 'meals', name: 'סעודות ואירוח', kind: 'events', sort_order: 230 },
+  const categories: Array<{
+    key: string;
+    name: string;
+    kind: string;
+    sort_order: number;
+    planned: number | null;
+    period: 'monthly' | 'yearly' | 'occasional' | null;
+    note: string | null;
+  }> = [
+    // --- משכורות ---
+    { key: 'rabbi_salary', name: 'משכורת הרב', kind: 'salary', sort_order: 10,
+      planned: plan(3000), period: 'monthly', note: 'אומדן לפי רישום הגבאי' },
+    { key: 'gabai_salary', name: 'משכורת גבאי', kind: 'salary', sort_order: 20,
+      planned: null, period: null, note: null },
+    { key: 'staff_salary', name: 'שכר עובדים', kind: 'salary', sort_order: 30,
+      planned: null, period: null, note: null },
 
-    { key: 'maintenance', name: 'תחזוקה ותיקונים', kind: 'maintenance', sort_order: 310 },
-    { key: 'furniture', name: 'ריהוט וציוד קבוע', kind: 'maintenance', sort_order: 320 },
+    // --- הוצאות שוטפות ---
+    { key: 'kiddush', name: 'קידושים', kind: 'ongoing', sort_order: 110,
+      planned: plan(11500), period: 'monthly', note: 'אומדן: 11,000-12,000 ₪ בחודש' },
+    { key: 'cleaning', name: 'ניקיון', kind: 'ongoing', sort_order: 120,
+      planned: plan(3500), period: 'monthly', note: 'אומדן, בערך' },
+    { key: 'loan_repayment', name: 'החזר הלוואה', kind: 'ongoing', sort_order: 130,
+      planned: plan(4000), period: 'monthly', note: 'אומדן לפי רישום הגבאי' },
+    { key: 'electricity', name: 'חשמל', kind: 'ongoing', sort_order: 140,
+      planned: null, period: 'monthly', note: null },
+    { key: 'water', name: 'מים', kind: 'ongoing', sort_order: 150,
+      planned: null, period: 'monthly', note: null },
+    { key: 'municipal_tax', name: 'ארנונה', kind: 'ongoing', sort_order: 160,
+      planned: null, period: 'yearly', note: null },
+    { key: 'insurance', name: 'ביטוח', kind: 'ongoing', sort_order: 170,
+      planned: null, period: 'yearly', note: 'ביטוח שנתי - הסכום טרם הוזן' },
+    { key: 'accountant', name: 'רואה חשבון', kind: 'ongoing', sort_order: 180,
+      planned: null, period: 'yearly', note: 'שנתי - הסכום טרם הוזן' },
+    { key: 'supplies', name: 'ציוד ומתכלים', kind: 'ongoing', sort_order: 190,
+      planned: null, period: null, note: null },
+    { key: 'books', name: 'ספרים ותשמישי קדושה', kind: 'ongoing', sort_order: 200,
+      planned: null, period: null, note: null },
 
-    { key: 'other_expense', name: 'אחר', kind: 'other', sort_order: 999 },
+    // --- חגים ואירועים ---
+    { key: 'holidays', name: 'חגים', kind: 'events', sort_order: 210,
+      planned: plan(100000), period: 'yearly', note: 'אומדן שנתי לפי רישום הגבאי' },
+    { key: 'special_events', name: 'אירועים', kind: 'events', sort_order: 220,
+      planned: plan(20000), period: 'yearly', note: 'אומדן שנתי, בערך' },
+    { key: 'fathers_and_sons', name: 'אבות ובנים', kind: 'events', sort_order: 230,
+      planned: null, period: 'yearly', note: 'הסכום טרם הוזן' },
+    { key: 'meals', name: 'סעודות ואירוח', kind: 'events', sort_order: 240,
+      planned: null, period: null, note: null },
+
+    // --- תחזוקה ואישורים ---
+    { key: 'maintenance', name: 'תחזוקה ותיקונים', kind: 'maintenance', sort_order: 310,
+      planned: null, period: 'occasional',
+      note: 'אינסטלטור, טכנאי מזגנים, טכנאי מקררים והחזקה שוטפת' },
+    { key: 'repairs_damage', name: 'תיקוני שבר ונזקים', kind: 'maintenance', sort_order: 320,
+      planned: null, period: 'occasional', note: 'מה שנשבר או נהרס בבית הכנסת' },
+    { key: 'permit_elevator', name: 'אישור מהנדס מעלית', kind: 'maintenance', sort_order: 330,
+      planned: null, period: 'yearly', note: 'אישור שנתי' },
+    { key: 'permit_electrician', name: 'אישור חשמלאי', kind: 'maintenance', sort_order: 340,
+      planned: null, period: 'yearly', note: 'אישור שנתי' },
+    { key: 'permit_fire', name: 'אישור כיבוי אש', kind: 'maintenance', sort_order: 350,
+      planned: null, period: 'yearly', note: 'אישור שנתי' },
+    { key: 'furniture', name: 'ריהוט וציוד קבוע', kind: 'maintenance', sort_order: 360,
+      planned: null, period: null, note: null },
+
+    { key: 'other_expense', name: 'אחר', kind: 'other', sort_order: 999,
+      planned: null, period: null, note: null },
   ];
   db.transaction(() => categories.forEach((row) => insertCategory.run(row)))();
+
+  // בסיס נתונים שכבר קיים לא יקבל את האומדנים דרך ה-INSERT שלמעלה, ולכן
+  // הם מוזנים כאן - אך ורק לקטגוריות שאין בהן עדיין אומדן, כדי שערך
+  // שהגבאי הזין ידנית לא יידרס.
+  const fillPlan = db.prepare(`
+    UPDATE expense_categories
+       SET planned_amount_agorot = @planned,
+           planned_period        = COALESCE(planned_period, @period),
+           planned_note          = COALESCE(planned_note, @note)
+     WHERE key = @key AND planned_amount_agorot IS NULL
+  `);
+  db.transaction(() =>
+    categories
+      .filter((row) => row.planned !== null)
+      .forEach((row) => fillPlan.run({ key: row.key, planned: row.planned, period: row.period, note: row.note })),
+  )();
+
+  // הקטגוריה נקראה בעבר "אירועים מיוחדים"; השם המקוצר תואם את הרישום.
+  db.prepare(
+    `UPDATE expense_categories SET name = 'אירועים' WHERE key = 'special_events' AND name = 'אירועים מיוחדים'`,
+  ).run();
+
+  // סוג ההתחייבות "מקום" מכסה גם את הריהוט, וכך הוא נקרא בקהילה.
+  db.prepare(
+    `UPDATE commitment_types SET name = 'מקום וריהוט' WHERE key = 'seat' AND name = 'מקום בבית הכנסת'`,
+  ).run();
 
   db.prepare(
     `INSERT INTO settings (key, value, description) VALUES (?, ?, ?)

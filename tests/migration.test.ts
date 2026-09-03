@@ -14,7 +14,11 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { openDatabase } from '../src/db/index.js';
 import { shekelsToAgorot } from '../src/domain/money.js';
-import { createExpense, listExpenseCategories } from '../src/services/expenses.js';
+import {
+  createExpense,
+  listExpenseCategories,
+  updateExpenseCategoryBudget,
+} from '../src/services/expenses.js';
 import { createStandingOrder } from '../src/services/standingOrders.js';
 import { createCommitment } from '../src/services/commitments.js';
 import { createOrganization } from '../src/services/organizations.js';
@@ -67,6 +71,10 @@ describe('שדרוג בסיס נתונים קיים', () => {
     expect(columns('expenses')).toContain('category_id');
     expect(columns('expenses')).toContain('event_id');
     expect(columns('expenses')).toContain('notes');
+    expect(columns('commitments')).toContain('instalments_count');
+    expect(columns('commitments')).toContain('first_payment_date');
+    expect(columns('expense_categories')).toContain('planned_amount_agorot');
+    expect(columns('expense_categories')).toContain('planned_period');
 
     const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all() as Array<{
       name: string;
@@ -130,5 +138,44 @@ describe('שדרוג בסיס נתונים קיים', () => {
     const db = openDatabase(file); // הרצה שנייה
     expect((db.prepare('SELECT COUNT(*) c FROM members').get() as { c: number }).c).toBe(1);
     db.close();
+  });
+
+  it('קטגוריות ואומדנים חדשים מגיעים גם לבסיס נתונים קיים', () => {
+    const file = makeLegacyDatabase();
+    const db = openDatabase(file);
+
+    const categories = listExpenseCategories(db);
+    const byKey = (key: string) => categories.find((row) => row.key === key);
+
+    // קטגוריות שנוספו לאחר שהמערכת כבר רצה
+    expect(byKey('loan_repayment')).toBeDefined();
+    expect(byKey('permit_fire')).toBeDefined();
+    expect(byKey('accountant')).toBeDefined();
+
+    // והאומדנים מוזנים גם לקטגוריות שכבר היו קיימות
+    expect(byKey('kiddush')!.plannedAmountAgorot).toBe(shekelsToAgorot(11500));
+    expect(byKey('cleaning')!.plannedAmountAgorot).toBe(shekelsToAgorot(3500));
+
+    // סוג ההתחייבות מקבל את השם המעודכן
+    expect(listCommitmentTypes(db).find((type) => type.key === 'seat')!.name).toBe('מקום וריהוט');
+
+    db.close();
+  });
+
+  it('אומדן שהגבאי שינה אינו נדרס בהפעלה הבאה', () => {
+    const file = makeLegacyDatabase();
+    const first = openDatabase(file);
+    const kiddush = listExpenseCategories(first).find((row) => row.key === 'kiddush')!;
+    updateExpenseCategoryBudget(first, kiddush.id, {
+      plannedAmountAgorot: shekelsToAgorot(9000),
+      plannedNote: 'ירד השנה',
+    });
+    first.close();
+
+    const second = openDatabase(file);
+    const after = listExpenseCategories(second).find((row) => row.key === 'kiddush')!;
+    expect(after.plannedAmountAgorot).toBe(shekelsToAgorot(9000));
+    expect(after.plannedNote).toBe('ירד השנה');
+    second.close();
   });
 });
