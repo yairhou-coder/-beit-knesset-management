@@ -48,6 +48,8 @@ function migrate(db: Db): void {
   addColumn('commitments', 'amount_confirmed', 'INTEGER NOT NULL DEFAULT 1');
 
   clearImportedSeatTotals(db);
+  linkOrphanSeatOrders(db);
+  backfillIncomeTypes(db);
 
   // תקציב מתוכנן לקטגוריית הוצאה
   addColumn('expense_categories', 'planned_amount_agorot', 'INTEGER');
@@ -78,6 +80,111 @@ function migrate(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(category_id);
     CREATE INDEX IF NOT EXISTS idx_expenses_event    ON expenses(event_id);
   `);
+}
+
+/**
+ * משלים את סוג ההתחייבות על הכנסות היסטוריות של הוראות קבע.
+ *
+ * חיוב הוראת קבע לא העביר את סוג ההוראה להכנסה, ולכן כל החיובים
+ * השוטפים הוצגו במסך ההכנסות ללא סוג. הסוג ידוע - הוא רשום על ההוראה
+ * עצמה - ולכן הוא מושלם כאן. אין כאן שינוי של סכום כלשהו.
+ */
+function backfillIncomeTypes(db: Db): void {
+  db.prepare(
+    `UPDATE incomes
+        SET commitment_type_id = (
+          SELECT so.commitment_type_id
+            FROM payments p JOIN standing_orders so ON so.id = p.standing_order_id
+           WHERE p.id = incomes.payment_id
+        )
+      WHERE commitment_type_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM payments p JOIN standing_orders so ON so.id = p.standing_order_id
+           WHERE p.id = incomes.payment_id AND so.commitment_type_id IS NOT NULL
+        )`,
+  ).run();
+}
+
+/**
+ * ממיר הוראות קבע של מקום/ריהוט שאינן מקושרות להתחייבות.
+ *
+ * הייבוא הראשון יצר לכל חבר שתי הוראות קבע נפרדות - שוטפת ומקום/ריהוט -
+ * לפני שהיה בכלל מושג של התחייבות מקושרת. התוצאה היא ששתיהן נראות
+ * למערכת כהוראה שוטפת, ולכן שתיהן הופיעו במסך ההו"ק השוטפות, וכל חבר
+ * הופיע בו פעמיים.
+ *
+ * לכל הוראה כזו נוצרת כאן התחייבות מקום/ריהוט, ההוראה מקושרת אליה,
+ * והתשלומים שכבר נגבו דרכה משויכים אליה. שום סכום אינו משתנה - רק
+ * השיוך נוסף, וכך התשלומים שנגבו בעבר נספרים ביתרה.
+ *
+ * הסכום הכולל נשאר "לא ידוע", כי הוא באמת אינו ידוע.
+ */
+function linkOrphanSeatOrders(db: Db): void {
+  const seatType = db.prepare("SELECT id FROM commitment_types WHERE key = 'seat'").get() as
+    | { id: number }
+    | undefined;
+  if (!seatType) return;
+
+  const orphans = db
+    .prepare(
+      `SELECT id, member_id, organization_id, start_date, notes
+         FROM standing_orders
+        WHERE commitment_type_id = ? AND commitment_id IS NULL`,
+    )
+    .all(seatType.id) as Array<{
+    id: number;
+    member_id: number;
+    organization_id: number;
+    start_date: string;
+    notes: string | null;
+  }>;
+  if (orphans.length === 0) return;
+
+  const insertCommitment = db.prepare(
+    `INSERT INTO commitments
+       (member_id, organization_id, commitment_type_id, commitment_date, amount_agorot,
+        paid_agorot, status, planned_payment_method, amount_confirmed, first_payment_date, notes)
+     VALUES (?, ?, ?, ?, 1, 0, 'open', 'standing_order', 0, ?, ?)`,
+  );
+  const linkOrder = db.prepare('UPDATE standing_orders SET commitment_id = ? WHERE id = ?');
+  const linkPayments = db.prepare(
+    `UPDATE payments SET commitment_id = ?
+      WHERE standing_order_id = ? AND commitment_id IS NULL`,
+  );
+  // ההכנסה נושאת גם את סוג ההתחייבות, וממנו נגזרת העמודה "סוג" במסך
+  // ההכנסות. בלעדיו כל ההכנסות של המקומות היו מוצגות כ"דמי חבר".
+  const linkIncomes = db.prepare(
+    `UPDATE incomes SET commitment_id = ?, commitment_type_id = ?
+      WHERE payment_id IN (SELECT id FROM payments WHERE standing_order_id = ?)`,
+  );
+  // amount_agorot של התחייבות שסכומה אינו ידוע עוקב אחרי מה ששולם
+  const syncTotals = db.prepare(
+    `UPDATE commitments
+        SET paid_agorot   = (SELECT COALESCE(SUM(amount_agorot), 0) FROM payments
+                              WHERE commitment_id = commitments.id AND status = 'completed'),
+            amount_agorot = MAX((SELECT COALESCE(SUM(amount_agorot), 0) FROM payments
+                                  WHERE commitment_id = commitments.id AND status = 'completed'), 1),
+            updated_at    = datetime('now')
+      WHERE id = ?`,
+  );
+
+  db.transaction(() => {
+    for (const order of orphans) {
+      const result = insertCommitment.run(
+        order.member_id,
+        order.organization_id,
+        seatType.id,
+        order.start_date,
+        order.start_date,
+        order.notes ?? 'מקום/ריהוט',
+      );
+      const commitmentId = Number(result.lastInsertRowid);
+      linkOrder.run(commitmentId, order.id);
+      linkPayments.run(commitmentId, order.id);
+      linkIncomes.run(commitmentId, seatType.id, order.id);
+      syncTotals.run(commitmentId);
+    }
+  })();
 }
 
 /**

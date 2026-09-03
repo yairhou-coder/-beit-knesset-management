@@ -163,6 +163,12 @@ export interface RecordPaymentInput {
   receiptRequired?: boolean;
   /** סוג המסמך שיופק. ברירת מחדל: לפי סוג ההתחייבות או ברירת המחדל של העמותה. */
   documentType?: DocumentType;
+  /**
+   * סוג ההתחייבות שיירשם על ההכנסה, כאשר התשלום אינו קשור להתחייבות.
+   * כך חיוב הוראת קבע שוטפת נרשם כ"דמי חבר" ולא ללא סוג.
+   * כשיש התחייבות, הסוג נלקח ממנה והשדה הזה אינו בשימוש.
+   */
+  commitmentTypeId?: number | null;
   description?: string | null;
 }
 
@@ -206,7 +212,7 @@ export async function recordPayment(db: Db, input: RecordPaymentInput): Promise<
   // --- שלב א: אימות והשלמת פרטים -------------------------------------------
   let organizationId = input.organizationId;
   let memberId = input.memberId ?? null;
-  let commitmentTypeId: number | null = null;
+  let commitmentTypeId: number | null = input.commitmentTypeId ?? null;
   let eventId: number | null = null;
   let documentType = input.documentType;
 

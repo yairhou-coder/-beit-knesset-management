@@ -3,7 +3,7 @@
 import { api } from '../api.js';
 import { badge, date, dateTime, days, esc, money, number, toneFor } from '../format.js';
 import { field, section, selectOptions, statCard, table, toast } from '../ui.js';
-import { label, organizationOptions, withOrg } from '../state.js';
+import { commitmentTypeOptions, label, organizationOptions, withOrg } from '../state.js';
 import { navigate } from '../router.js';
 import { openAssignPaymentModal, openPaymentModal } from './paymentForm.js';
 
@@ -168,16 +168,77 @@ export function bindPayments(root, reload) {
 
 // --- הכנסות ----------------------------------------------------------------
 
+const SOURCE_TONE = { recurring: 'positive', seats: 'neutral', other: 'warning' };
+
 export async function renderIncomes(route) {
   const params = route.params;
   const data = await api.incomes(
     withOrg({
       organizationId: params.organizationId,
+      commitmentTypeId: params.commitmentTypeId,
+      source: params.source,
       fromDate: params.fromDate,
       toDate: params.toDate,
       receiptStatus: params.receiptStatus,
     }),
   );
+  const summary = data.summary;
+
+  // שלושה זרמי הכנסה נפרדים: דמי חבר חודשיים, תשלומי מקומות, וכל השאר.
+  const cards = `
+    <div class="card-grid" style="margin:0">
+      ${statCard({
+        title: 'סך ההכנסות',
+        amountAgorot: summary.totalAgorot,
+        tone: 'neutral',
+        hint: `${number(summary.count)} רשומות`,
+        link: '#/incomes',
+      })}
+      ${summary.bySource
+        .map((row) =>
+          statCard({
+            title: `הכנסות ${row.label}`,
+            amountAgorot: row.amountAgorot,
+            tone: SOURCE_TONE[row.source] ?? 'neutral',
+            hint: `${number(row.count)} תשלומים`,
+            link: `#/incomes?source=${row.source}`,
+          }),
+        )
+        .join('')}
+    </div>`;
+
+  const byType = table(
+    [
+      { header: 'סוג', cell: (row) => esc(row.label) },
+      { header: 'סכום', className: 'num', cell: (row) => money(row.amountAgorot) },
+      { header: 'רשומות', className: 'num', cell: (row) => number(row.count) },
+      {
+        header: '',
+        cell: (row) =>
+          row.id ? `<a class="btn small" href="#/incomes?commitmentTypeId=${row.id}">הצג</a>` : '',
+      },
+    ],
+    summary.byType,
+    'אין נתונים',
+  );
+
+  const sourceOptions = [
+    { value: '', label: 'כל המקורות' },
+    ...summary.bySource.map((row) => ({ value: row.source, label: row.label })),
+  ];
+
+  const filters = `
+    <form id="income-filters" class="filters">
+      ${field('מקור ההכנסה', `<select name="source">${selectOptions(sourceOptions, params.source ?? '')}</select>`)}
+      ${field('סוג', `<select name="commitmentTypeId">${selectOptions(commitmentTypeOptions(), params.commitmentTypeId, { placeholder: 'כל הסוגים' })}</select>`)}
+      ${field('עמותה', `<select name="organizationId">${selectOptions(organizationOptions(), params.organizationId, { placeholder: 'כל העמותות' })}</select>`)}
+      ${field('מתאריך', `<input type="date" name="fromDate" value="${esc(params.fromDate ?? '')}" />`)}
+      ${field('עד תאריך', `<input type="date" name="toDate" value="${esc(params.toDate ?? '')}" />`)}
+      <div class="btn-row">
+        <button type="submit" class="btn primary">סינון</button>
+        <button type="button" class="btn" data-reset>ניקוי</button>
+      </div>
+    </form>`;
 
   const rows = table(
     [
@@ -188,6 +249,7 @@ export async function renderIncomes(route) {
           row.member ? `<a href="#/members/${row.member.id}">${esc(row.member.name)}</a>` : '<span class="muted">ללא שיוך</span>',
       },
       { header: 'עמותה', cell: (row) => esc(row.organization.name) },
+      { header: 'מקור', cell: (row) => badge(row.sourceLabel, SOURCE_TONE[row.source] ?? 'neutral') },
       { header: 'סוג', cell: (row) => esc(row.typeName ?? '—') },
       { header: 'אירוע', cell: (row) => esc(row.eventName ?? '—') },
       { header: 'סכום', className: 'num', cell: (row) => money(row.amountAgorot) },
@@ -213,10 +275,26 @@ export async function renderIncomes(route) {
     'אין הכנסות',
   );
 
-  return section('הכנסות בפועל', rows, {
-    hint: `סה"כ ${money(data.totals.amountAgorot)} · הכנסה נרשמת רק עם קבלת תשלום בפועל`,
-    flush: true,
+  return `
+    ${section('סיכום ההכנסות', cards, { hint: 'לחיצה על כרטיס מסננת את הרשימה' })}
+    ${section('לפי סוג', byType, { flush: true })}
+    ${section('סינון', filters)}
+    ${section('הכנסות בפועל', rows, {
+      hint:
+        summary.count > data.items.length
+          ? `${number(data.items.length)} אחרונות מתוך ${number(summary.count)} · סה"כ ${money(summary.totalAgorot)}`
+          : `סה"כ ${money(summary.totalAgorot)} · הכנסה נרשמת רק עם קבלת תשלום בפועל`,
+      flush: true,
+    })}`;
+}
+
+export function bindIncomes(root) {
+  const form = root.querySelector('#income-filters');
+  form?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    navigate('incomes', Object.fromEntries(new FormData(form).entries()));
   });
+  form?.querySelector('[data-reset]')?.addEventListener('click', () => navigate('incomes', {}));
 }
 
 // --- הוראות קבע ------------------------------------------------------------

@@ -19,8 +19,9 @@ import {
   listExpenseCategories,
   updateExpenseCategoryBudget,
 } from '../src/services/expenses.js';
-import { createStandingOrder } from '../src/services/standingOrders.js';
+import { createStandingOrder, listStandingOrders } from '../src/services/standingOrders.js';
 import { createCommitment } from '../src/services/commitments.js';
+import { listSeatCommitments } from '../src/services/seats.js';
 import { createOrganization } from '../src/services/organizations.js';
 import { createMember } from '../src/services/members.js';
 import { listCommitmentTypes } from '../src/services/catalog.js';
@@ -246,6 +247,88 @@ describe('שדרוג בסיס נתונים קיים', () => {
     };
     expect(row.amount_confirmed).toBe(1);
     expect(row.amount_agorot).toBe(2000000);
+    db.close();
+  });
+
+  /**
+   * המצב שנוצר אצל המשתמש בפועל: הייבוא הראשון יצר לכל חבר שתי הוראות
+   * קבע נפרדות - שוטפת ומקום/ריהוט - בלי שום התחייבות מאחוריהן. שתיהן
+   * נראו למערכת כהוראה שוטפת, ולכן כל חבר הופיע פעמיים במסך ההו"ק.
+   */
+  function makeTwoOrdersPerMember(): string {
+    const file = makeLegacyDatabase();
+    const legacy = new Database(file);
+    legacy.exec(`
+      -- מתחילים נקי, כדי שהתרחיש יהיה בדיוק שתי הוראות לחבר אחד
+      DELETE FROM standing_orders;
+      INSERT INTO commitment_types (id, key, name) VALUES (2, 'membership', 'דמי חבר');
+      -- הו"ק שוטפת
+      INSERT INTO standing_orders (id, member_id, organization_id, commitment_type_id,
+                                   amount_agorot, day_of_month, start_date)
+        VALUES (10, 1, 1, 2, 15000, 11, '2024-03-11');
+      -- הו"ק מקום/ריהוט, ללא התחייבות מקושרת
+      INSERT INTO standing_orders (id, member_id, organization_id, commitment_type_id,
+                                   amount_agorot, day_of_month, start_date)
+        VALUES (11, 1, 1, 1, 40000, 11, '2024-03-11');
+      -- שני חיובים היסטוריים של הוראת המקום
+      INSERT INTO payments (id, organization_id, member_id, standing_order_id, idempotency_key,
+                            amount_agorot, payment_date, method, status)
+        VALUES (100, 1, 1, 11, 'so-11-2024-03', 40000, '2024-03-11', 'standing_order', 'completed'),
+               (101, 1, 1, 11, 'so-11-2024-04', 40000, '2024-04-11', 'standing_order', 'completed');
+      INSERT INTO incomes (id, payment_id, organization_id, member_id, amount_agorot, income_date)
+        VALUES (200, 100, 1, 1, 40000, '2024-03-11'),
+               (201, 101, 1, 1, 40000, '2024-04-11');
+    `);
+    legacy.close();
+    return file;
+  }
+
+  it('הוראת מקום/ריהוט ללא התחייבות מומרת להתחייבות ויוצאת מהמסך השוטף', () => {
+    const db = openDatabase(makeTwoOrdersPerMember());
+
+    const recurring = listStandingOrders(db, { kind: 'recurring' });
+    expect(recurring).toHaveLength(1);
+    expect(recurring[0]!.amountAgorot).toBe(15000); // רק ההו"ק השוטפת
+
+    const seats = listSeatCommitments(db, {});
+    expect(seats).toHaveLength(1);
+    expect(seats[0]!.instalmentAgorot).toBe(40000);
+    // התשלומים ההיסטוריים שויכו להתחייבות שנוצרה
+    expect(seats[0]!.paidAgorot).toBe(80000);
+    expect(seats[0]!.instalmentsPaid).toBe(2);
+    // והסכום הכולל נשאר לא ידוע, כי הוא באמת אינו ידוע
+    expect(seats[0]!.amountConfirmed).toBe(false);
+    expect(seats[0]!.amountAgorot).toBeNull();
+
+    db.close();
+  });
+
+  it('ההמרה אינה משנה שום סכום ואינה מוחקת רשומות', () => {
+    const file = makeTwoOrdersPerMember();
+    const db = openDatabase(file);
+
+    expect((db.prepare('SELECT COUNT(*) c FROM payments').get() as { c: number }).c).toBe(2);
+    expect((db.prepare('SELECT COUNT(*) c FROM incomes').get() as { c: number }).c).toBe(2);
+    expect(
+      (db.prepare('SELECT SUM(amount_agorot) s FROM payments').get() as { s: number }).s,
+    ).toBe(80000);
+    expect((db.prepare('SELECT COUNT(*) c FROM standing_orders').get() as { c: number }).c).toBe(2);
+
+    // ההכנסות קיבלו את סוג ההתחייבות, כדי שהעמודה "סוג" תציג מקום וריהוט
+    const income = db.prepare('SELECT commitment_type_id FROM incomes WHERE id = 200').get() as {
+      commitment_type_id: number;
+    };
+    expect(income.commitment_type_id).toBe(1);
+
+    db.close();
+  });
+
+  it('הרצה חוזרת אינה יוצרת התחייבות נוספת', () => {
+    const file = makeTwoOrdersPerMember();
+    openDatabase(file).close();
+    const db = openDatabase(file);
+    expect((db.prepare('SELECT COUNT(*) c FROM commitments').get() as { c: number }).c).toBe(1);
+    expect(listSeatCommitments(db, {})).toHaveLength(1);
     db.close();
   });
 });

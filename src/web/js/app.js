@@ -15,6 +15,7 @@ import {
   bindStandingOrders,
   renderAlerts,
   renderCommitments,
+  bindIncomes,
   renderIncomes,
   renderNotifications,
   renderPayments,
@@ -167,7 +168,7 @@ async function bootstrap() {
   register('collections', page(renderCollections, bindCollections));
   register('commitments', page(renderCommitments, bindCommitments));
   register('payments', page(renderPayments, bindPayments));
-  register('incomes', page(renderIncomes));
+  register('incomes', page(renderIncomes, bindIncomes));
   register('expenses', page(renderExpenses, bindExpenses));
   register('receipts', page(renderReceipts, bindReceipts));
   register('members', membersPage);

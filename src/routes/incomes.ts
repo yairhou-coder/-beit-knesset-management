@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import type { Db } from '../db/index.js';
 import type { IncomeReceiptStatus } from '../domain/types.js';
-import { getIncome, listIncomes, setReceiptRequired, type IncomeFilters } from '../services/incomes.js';
+import {
+  getIncome,
+  getIncomeSummary,
+  listIncomes,
+  setReceiptRequired,
+  type IncomeFilters,
+  type IncomeSource,
+} from '../services/incomes.js';
 import { asArray, body, intParam, optionalBool, optionalInt, optionalString } from './helpers.js';
 
 export function createIncomesRouter(db: Db): Router {
@@ -18,6 +25,10 @@ export function createIncomesRouter(db: Db): Router {
     assign('commitmentId', optionalInt(query['commitmentId']));
     assign('eventId', optionalInt(query['eventId']));
     assign('commitmentTypeId', optionalInt(query['commitmentTypeId']));
+    const source = optionalString(query['source']);
+    if (source === 'recurring' || source === 'seats' || source === 'other') {
+      filters.source = source as IncomeSource;
+    }
     assign('fromDate', optionalString(query['fromDate']));
     assign('toDate', optionalString(query['toDate']));
     assign('sort', optionalString(query['sort']));
@@ -28,9 +39,12 @@ export function createIncomesRouter(db: Db): Router {
     if (statuses?.length) filters.receiptStatus = statuses as IncomeReceiptStatus[];
 
     const items = listIncomes(db, filters);
+    // הסיכום מחושב על כל ההכנסות התואמות, ולא רק על השורות שנטענו
+    const summary = getIncomeSummary(db, filters);
     res.json({
       items,
-      totals: { amountAgorot: items.reduce((sum, item) => sum + item.amountAgorot, 0) },
+      summary,
+      totals: { amountAgorot: summary.totalAgorot },
     });
   });
 

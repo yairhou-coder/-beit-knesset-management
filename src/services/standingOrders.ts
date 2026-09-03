@@ -137,8 +137,17 @@ export function listStandingOrders(
   where.addIf(filters.memberId, 's.member_id = ?', filters.memberId);
   where.addIf(filters.organizationId, 's.organization_id = ?', filters.organizationId);
   where.addIf(filters.status, 's.status = ?', filters.status);
-  if (filters.kind === 'recurring') where.add('s.commitment_id IS NULL');
-  else if (filters.kind === 'commitment') where.add('s.commitment_id IS NOT NULL');
+  // "שוטפת" = לא מקושרת להתחייבות **וגם** לא מסוג מקום/ריהוט. התנאי השני
+  // הוא רשת ביטחון: הוראת מקום שאיבדה את הקישור להתחייבות עדיין לא
+  // תיחשב שוטפת ולא תיצור כפילות במסך.
+  const SEAT_TYPE = "(SELECT id FROM commitment_types WHERE key = 'seat')";
+  if (filters.kind === 'recurring') {
+    where.add(
+      `s.commitment_id IS NULL AND (s.commitment_type_id IS NULL OR s.commitment_type_id != ${SEAT_TYPE})`,
+    );
+  } else if (filters.kind === 'commitment') {
+    where.add(`(s.commitment_id IS NOT NULL OR s.commitment_type_id = ${SEAT_TYPE})`);
+  }
   const rows = db
     .prepare(`${JOINED_SELECT} ${where.sql} ORDER BY s.status, m.last_name`)
     .all(...where.values) as StandingOrderJoinedRow[];
@@ -349,6 +358,9 @@ export async function chargeStandingOrder(
     memberId: order.member_id,
     standingOrderId: id,
     commitmentId: order.commitment_id,
+    // סוג ההוראה עובר להכנסה, כדי שחיוב שוטף ייראה במסך ההכנסות
+    // כ"דמי חבר" ולא כשורה ללא סוג.
+    commitmentTypeId: order.commitment_type_id,
     amountAgorot,
     paymentDate: options.paymentDate ?? today(),
     method: order.method,
