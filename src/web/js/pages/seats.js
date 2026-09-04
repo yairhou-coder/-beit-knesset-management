@@ -165,12 +165,26 @@ export async function renderSeats(route) {
       {
         header: 'תשלומים',
         className: 'num',
-        // "20 מתוך 30" ולא "20 / 30": בטקסט מימין לשמאל שני מספרים משני
-        // צדי לוכסן מתהפכים בתצוגה, ו-20 מתוך 30 נקרא כ-30 מתוך 20.
-        cell: (row) =>
-          row.instalmentsCount
-            ? `${number(row.instalmentsPaid)} מתוך ${number(row.instalmentsCount)}`
-            : `${number(row.instalmentsPaid)}<div class="small muted">עד היום</div>`,
+        /*
+         * מוצגות שתי עובדות שלא יכולות לסתור זו את זו: כמה חיובים כבר
+         * בוצעו, וכמה נותרו לפי היתרה והסכום החודשי הנוכחי.
+         *
+         * בעבר הוצג "כמה בוצעו מתוך כמה תוכננו", וזה הטעה: חבר שכבר
+         * שולם עליו 21 חיובים ואז נקבעה לו תוכנית של 10 תשלומים הוצג
+         * כ"21 מתוך 10". שני המספרים היו נכונים, אבל הם מדדו דברים
+         * שונים - חיובים שקרו מול תשלומים שתוכננו - וההצמדה שלהם
+         * נראתה כמו שגיאה.
+         */
+        cell: (row) => {
+          const done = `<strong>${number(row.instalmentsPaid)}</strong> בוצעו`;
+          if (row.amountConfirmed && row.balanceAgorot <= 0) {
+            return `${done}<div class="small muted">הושלם</div>`;
+          }
+          if (row.instalmentsRemaining !== null && row.instalmentsRemaining > 0) {
+            return `${done}<div class="small muted">נותרו ${number(row.instalmentsRemaining)}</div>`;
+          }
+          return `${done}<div class="small muted">עד היום</div>`;
+        },
       },
       { header: 'תשלום ראשון', cell: (row) => (row.firstPaymentDate ? date(row.firstPaymentDate) : '—') },
       { header: 'יום חיוב', className: 'num', cell: (row) => (row.dayOfMonth ? number(row.dayOfMonth) : '—') },
@@ -285,6 +299,15 @@ export async function openSeatEditModal({ commitmentId, onDone }) {
           <dt>עמותה</dt><dd>${esc(row.organization.name)}</dd>
         </dl>
       </div>
+      ${
+        row.instalmentsPaid > 0
+          ? `<p class="small full" style="padding:0 4px">
+               <strong>שימו לב:</strong> כבר נגבו מהחבר ${number(row.instalmentsPaid)} חיובים
+               בסך ${money(row.paidAgorot)}. הסכום הכולל שתזינו הוא הסכום של
+               <strong>כל ההתחייבות</strong> וכולל אותם — היתרה תחושב כהפרש.
+             </p>`
+          : ''
+      }
 
       <div class="form-grid">
         ${field(

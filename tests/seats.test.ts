@@ -525,4 +525,49 @@ describe('מקומות וריהוט', () => {
       updateSeat(db, commitment.commitmentId, { instalmentAgorot: shekelsToAgorot(300) }),
     ).toThrow(/אין הוראת קבע/);
   });
+
+  /**
+   * התרחיש שהטעה בפועל: לחבר כבר נגבו 21 חיובים של 350 ₪, ואז נקבעה
+   * לו תוכנית חדשה של 20,000 ₪ ב-10 תשלומים של 2,000 ₪. הכסף שנגבה
+   * אינו נעלם, ולכן "שולם" הוא 7,350 ולא כפולה של 2,000.
+   */
+  it('הזנת תוכנית חדשה על חבר עם היסטוריית חיובים שומרת על מה שכבר נגבה', async () => {
+    const { commitment, standingOrderId } = await createSeatCommitment(db, {
+      memberId,
+      organizationId: orgId,
+      amountAgorot: null,
+      paymentMode: 'standing_order',
+      instalmentAgorot: shekelsToAgorot(350),
+      firstPaymentDate: '2024-12-08',
+    });
+
+    // 21 חיובים היסטוריים של 350 ₪
+    for (let i = 0; i < 21; i += 1) {
+      const month = String((i % 12) + 1).padStart(2, '0');
+      const year = 2024 + Math.floor(i / 12);
+      await chargeStandingOrder(db, standingOrderId!, `${year}-${month}`);
+    }
+
+    const before = listSeatCommitments(db, { memberId })[0]!;
+    expect(before.paidAgorot).toBe(shekelsToAgorot(7350)); // 21 × 350
+    expect(before.instalmentsPaid).toBe(21);
+
+    // ועכשיו נקבעת תוכנית חדשה לגמרי
+    const after = updateSeat(db, commitment.commitmentId, {
+      amountAgorot: shekelsToAgorot(20000),
+      instalmentsCount: 10,
+      instalmentAgorot: shekelsToAgorot(2000),
+      firstPaymentDate: '2026-01-01',
+      dayOfMonth: 1,
+    });
+
+    expect(after.amountAgorot).toBe(shekelsToAgorot(20000));
+    // הכסף שנגבה נשמר, ולכן היתרה היא ההפרש
+    expect(after.paidAgorot).toBe(shekelsToAgorot(7350));
+    expect(after.balanceAgorot).toBe(shekelsToAgorot(12650));
+    expect(after.instalmentsPaid).toBe(21);
+    // כמה נותרו נגזר מהיתרה ומהסכום החודשי החדש, ולא ממספר התשלומים
+    // שהוצהר - 12,650 חלקי 2,000, מעוגל למעלה
+    expect(after.instalmentsRemaining).toBe(7);
+  });
 });
