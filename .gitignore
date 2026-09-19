@@ -12,3 +12,4 @@ data/receipts/
 coverage/
 .DS_Store
 data/attachments/
+data/share/

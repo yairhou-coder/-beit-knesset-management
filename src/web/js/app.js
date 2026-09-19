@@ -1,5 +1,6 @@
 /** נקודת הכניסה של ה-UI: טעינת נתוני עזר, ניתוב וחיבור המסכים. */
 
+import { api } from './api.js';
 import { loading, toast } from './ui.js';
 import { loadReferenceData, setOrganization, state } from './state.js';
 import { navigate, parseHash, register, setNotFound, start } from './router.js';
@@ -154,6 +155,30 @@ function setupOrgFilter() {
   });
 }
 
+/**
+ * סימון מצב שיתוף בראש המסך.
+ *
+ * כאשר המערכת נפתחה דרך קישור משותף, הצופה צריך לדעת שהוא רואה עותק
+ * להדגמה ולא את הנתונים החיים - וכן, אם הקישור לצפייה בלבד, שכפתורי
+ * השמירה ייחסמו. החסימה עצמה נעשית בשרת; זו רק ההודעה.
+ */
+async function showShareNotice() {
+  let access = null;
+  try {
+    access = await api.get('/access');
+  } catch {
+    return; // המערכת עובדת גם בלי המידע הזה
+  }
+  if (!access?.shared) return;
+
+  const banner = document.createElement('div');
+  banner.className = `share-banner${access.readOnly ? ' read-only' : ''}`;
+  banner.textContent = access.readOnly
+    ? 'קישור הדגמה · צפייה בלבד — אפשר לעבור בין כל המסכים, אך שינויים לא יישמרו'
+    : 'קישור הדגמה · הנתונים כאן הם עותק להדגמה, ואינם הנתונים של בית המדרש';
+  document.querySelector('.main')?.prepend(banner);
+}
+
 async function bootstrap() {
   try {
     await loadReferenceData();
@@ -163,6 +188,7 @@ async function bootstrap() {
   }
 
   setupOrgFilter();
+  void showShareNotice();
 
   register('dashboard', page(renderDashboard));
   register('collections', page(renderCollections, bindCollections));

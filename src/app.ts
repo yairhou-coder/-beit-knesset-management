@@ -1,5 +1,6 @@
 import path from 'node:path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import { createAccessGate, createReadOnlyGuard } from './access.js';
 import { config, PROJECT_ROOT } from './config.js';
 import type { Db } from './db/index.js';
 import { MoneyError } from './domain/money.js';
@@ -7,8 +8,22 @@ import { ProviderError } from './integrations/types.js';
 import { createApiRouter } from './routes/index.js';
 import { AppError } from './services/errors.js';
 
-export function createApp(db: Db): Express {
+/** הגדרות שיתוף. ברירת המחדל נלקחת מהסביבה, והבדיקות מעבירות אותן במפורש. */
+export interface AppOptions {
+  /** מפתח הגישה לקישור משותף. null = אין שכבת גישה. */
+  accessKey?: string | null;
+  /** חסימת כל פעולה שמשנה נתונים. */
+  readOnly?: boolean;
+}
+
+export function createApp(db: Db, options: AppOptions = {}): Express {
+  const accessKey = options.accessKey === undefined ? config.share.key : options.accessKey;
+  const readOnly = options.readOnly ?? config.share.readOnly;
+
   const app = express();
+
+  // שומר הסף קודם לכל השאר: בלי מפתח גישה לא נחשף דבר, גם לא קובץ סטטי.
+  app.use(createAccessGate(accessKey));
 
   // הגוף הגולמי של Webhooks נשמר לצורך אימות חתימה.
   app.use(
@@ -18,6 +33,11 @@ export function createApp(db: Db): Express {
   app.use(express.json({ limit: '25mb' })); // חשבוניות מועלות כ-base64
   app.use(express.urlencoded({ extended: false }));
 
+  // הממשק שואל מה מצב הגישה כדי לסמן אותו למשתמש. החסימה עצמה היא בשרת.
+  app.get('/api/access', (_req, res) => {
+    res.json({ shared: accessKey !== null, readOnly });
+  });
+  app.use('/api', createReadOnlyGuard(readOnly));
   app.use('/api', createApiRouter(db));
 
   // ה-UI הוא אפליקציית עמוד יחיד עם ניתוב מבוסס hash, ולכן קבצים סטטיים מספיקים.

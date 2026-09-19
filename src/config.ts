@@ -24,6 +24,14 @@ export const config = {
   defaultPaymentProvider: env('DEFAULT_PAYMENT_PROVIDER', 'mock'),
   defaultReceiptProvider: env('DEFAULT_RECEIPT_PROVIDER', 'mock'),
   defaultNotificationProvider: env('DEFAULT_NOTIFICATION_PROVIDER', 'mock'),
+  /**
+   * שיתוף זמני של המערכת עם אדם חיצוני (npm run share).
+   * ריק = הרצה מקומית רגילה, בלי מפתח ובלי הגבלה.
+   */
+  share: {
+    key: env('SHARE_KEY', '') || null,
+    readOnly: env('SHARE_READ_ONLY', '') === '1',
+  },
   mock: {
     receiptFailureRate: envNumber('MOCK_RECEIPT_FAILURE_RATE', 0),
     paymentFailureRate: envNumber('MOCK_PAYMENT_FAILURE_RATE', 0),

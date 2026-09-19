@@ -125,6 +125,16 @@ a:hover { text-decoration: underline; }
 }
 .topbar h1 { margin: 0; font-size: 20px; }
 .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* פס מצב לקישור שיתוף. נמצא מעל הכותרת, כדי שלא ייעלם בגלילה של מסך. */
+.share-banner {
+  padding: 8px 24px;
+  font-size: 13px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-bottom: 1px solid var(--border);
+}
+.share-banner.read-only { background: var(--neutral-bg); color: var(--text-muted); }
 .view { padding: 20px 24px 40px; }
 
 /* --- כרטיסים --- */
