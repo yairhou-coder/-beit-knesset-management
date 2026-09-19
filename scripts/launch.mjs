@@ -11,6 +11,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -167,6 +168,30 @@ function waitForServer(port, timeoutMs = 90_000) {
   });
 }
 
+/**
+ * כתובת המערכת ברשת המקומית.
+ *
+ * localhost עובד רק על המחשב הזה. כדי לפתוח את המערכת מהטלפון או
+ * ממחשב אחר באותו בית - צריך את כתובת ה-IP של המחשב ברשת, ולכן היא
+ * מוצגת יחד עם כתובת ה-localhost.
+ *
+ * מוחזרת רק כתובת פרטית (192.168 / 10.x / 172.16-31), שהיא הרשת
+ * הביתית. אם לא נמצאה כזו - מוחזר null ולא מוצג דבר.
+ */
+function localNetworkAddress() {
+  const candidates = [];
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family !== 'IPv4' || address.internal) continue;
+      const [a, b] = address.address.split('.').map(Number);
+      const isPrivate =
+        a === 192 && b === 168 ? true : a === 10 ? true : a === 172 && b >= 16 && b <= 31;
+      if (isPrivate) candidates.push(address.address);
+    }
+  }
+  return candidates[0] ?? null;
+}
+
 /** פותח את הדפדפן בכתובת המערכת. */
 function openBrowser(url) {
   if (process.env['BK_NO_BROWSER'] === '1') return;
@@ -273,8 +298,15 @@ async function main() {
   }
 
   if (await waitForServer(port)) {
+    const lan = localNetworkAddress();
     log('');
     log(`  ✔ המערכת פועלת: ${url}`);
+    if (lan) {
+      log('');
+      log(`    מהטלפון או ממחשב אחר באותו בית:  http://${lan}:${port}`);
+      log('    (עובד רק כשהמחשב הזה דולק והחלון פתוח, ורק באותה רשת)');
+    }
+    log('');
     log('    לסגירה: סגרו את החלון הזה, או הקישו Ctrl+C');
     log('');
     openBrowser(url);
